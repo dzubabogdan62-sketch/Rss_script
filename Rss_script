@@ -1,19 +1,4 @@
--- RSS | God Mode Menu (Optimized)
--- Автор:
-local success, Rayfield = pcall(function()
-    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-end)
-
-if not success then
-    warn("[RSS] Ошибка загрузки Rayfield! Пробую альтернативный источник...")
-    success, Rayfield = pcall(function()
-        return loadstring(game:HttpGet('https://raw.githubusercontent.com/shlexware/Rayfield/main/source'))()
-    end)
-end
-
-if not success or not Rayfield then
-    error("[RSS] Не удалось загрузить Rayfield UI библиотеку!")
-end
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
    Name = "RSS | God Mode Menu",
@@ -25,7 +10,6 @@ local Window = Rayfield:CreateWindow({
 local Tab = Window:CreateTab("⚽ Функции Мяча", 4483362458)
 local TabGoalkeeper = Window:CreateTab("🥅 Вратарь", 4483362458)
 
--- Настройки
 local Settings = {
     MagnetEnabled = false,
     Method = "Плавное притяжение",
@@ -38,871 +22,133 @@ local Settings = {
     AutoMove = true
 }
 
--- Визуалы
 local radiusPart = nil
 local goalkeeperZone = nil
+local lastSaveTime = 0
 
--- Кэши и таймеры
-local cachedBall = nil
-local lastBallSearch = 0
-local ballSearchInterval = 0.2 -- секунд (более частый поиск для быстрого обнаружения)
-
-local cachedGoal = nil
-local lastGoalCheck = 0
-local goalCheckInterval = 0.5 -- секунд (уменьшено для более частой проверки)
-
-local lastUpdate = 0
-local logicInterval = 0.08 -- ~12 логик/сек (баланс между производительностью и отзывчивостью)
-
-local lastRadiusUpdate = 0
-local radiusUpdateInterval = 0.12
-
--- Утилиты
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-
-local function safeDestroy(inst)
-    if inst and inst.Destroy then
-        pcall(function() inst:Destroy() end)
-    end
-end
-
--- Визуализация радиуса
-local function createRadiusVisual()
-    safeDestroy(radiusPart)
-
-    radiusPart = Instance.new("Part")
-    radiusPart.Name = "MagnetRadius"
-    radiusPart.Anchored = true
-    radiusPart.CanCollide = false
-    radiusPart.Shape = Enum.PartType.Ball
-    radiusPart.Material = Enum.Material.ForceField
-    radiusPart.Color = Color3.fromRGB(0, 255, 255)
-    radiusPart.Transparency = 0.7
-    radiusPart.Size = Vector3.new(Settings.Range * 2, Settings.Range * 2, Settings.Range * 2)
-    radiusPart.Parent = workspace
-
-    local highlight = Instance.new("SelectionBox")
-    highlight.Name = "MagnetRadiusBox"
-    highlight.LineThickness = 0.05
-    highlight.Color3 = Color3.fromRGB(0, 255, 255)
-    highlight.SurfaceTransparency = 0.9
-    highlight.Adornee = radiusPart
-    highlight.Parent = radiusPart
-
-    return radiusPart
-end
-
-local function updateRadiusVisual()
-    if not Settings.ShowRadius or not radiusPart then return end
-    if tick() - lastRadiusUpdate < radiusUpdateInterval then return end
-    lastRadiusUpdate = tick()
-
-    local pl = Players.LocalPlayer
-    local char = pl and pl.Character
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        local hrp = char.HumanoidRootPart
-        radiusPart.Position = hrp.Position
-        radiusPart.Size = Vector3.new(Settings.Range * 2, Settings.Range * 2, Settings.Range * 2)
-    else
-        -- если нет персонажа — спрятать
-        radiusPart.Transparency = 1
-    end
-end
-
--- Визуализация зоны вратаря
-local function createGoalkeeperZone()
-    safeDestroy(goalkeeperZone)
-
-    goalkeeperZone = Instance.new("Part")
-    goalkeeperZone.Name = "GoalkeeperZone"
-    goalkeeperZone.Anchored = true
-    goalkeeperZone.CanCollide = false
-    goalkeeperZone.Shape = Enum.PartType.Ball
-    goalkeeperZone.Material = Enum.Material.Neon
-    goalkeeperZone.Color = Color3.fromRGB(255, 50, 50)
-    goalkeeperZone.Transparency = 0.75
-    goalkeeperZone.Size = Vector3.new(Settings.SaveDistance * 2, Settings.SaveDistance * 2, Settings.SaveDistance * 2)
-    goalkeeperZone.Parent = workspace
-
-    local highlight = Instance.new("SelectionBox")
-    highlight.Name = "GoalkeeperZoneBox"
-    highlight.LineThickness = 0.08
-    highlight.Color3 = Color3.fromRGB(255, 0, 0)
-    highlight.Adornee = goalkeeperZone
-    highlight.Parent = goalkeeperZone
-end
-
-local function updateGoalkeeperZonePosition(goalkeeperPosition)
-    if not goalkeeperZone or not goalkeeperPosition then return end
-    goalkeeperZone.Position = goalkeeperPosition
-    goalkeeperZone.Size = Vector3.new(Settings.SaveDistance * 2, Settings.SaveDistance * 2, Settings.SaveDistance * 2)
-end
-
--- =========================
--- ПОИСК МЯЧА (КЕШИРОВАННЫЙ)
--- =========================
-local function isBallValid(v)
-    if not v or not v:IsA("BasePart") then return false end
-    if v.Name ~= "SoccerBall" then return false end
-    -- исключаем лобби-мячи более строго
-    local full = v:GetFullName()
-    if full:find("Lobby") or full:find("SoccerBalls") or full:find("Lobby%.SoccerBalls") then
-        return false
-    end
-    -- Проверяем, что мяч не в моделе лобби (более строгая проверка)
-    local parent = v.Parent
-    while parent do
-        if parent.Name == "Lobby" or parent.Name == "SoccerBalls" then
-            return false
-        end
-        parent = parent.Parent
-    end
-    return true
-end
-
-local function getBallCached(forceSearch)
-    -- проверяем кеш (если не принудительный поиск)
-    if not forceSearch and cachedBall and cachedBall.Parent and cachedBall:IsA("BasePart") then
-        -- Проверяем, что мяч все еще валиден и НЕ в лобби
-        local full = cachedBall:GetFullName()
-        if not full:find("Lobby") and not full:find("SoccerBalls") then
-            -- Дополнительная проверка - мяч не должен быть слишком далеко от игрока
-            local player = Players.LocalPlayer
-            local char = player and player.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                local dist = (cachedBall.Position - char.HumanoidRootPart.Position).Magnitude
-                if dist < 2000 then -- если мяч в разумных пределах, возвращаем кеш
-                    return cachedBall
-                end
-            else
-                return cachedBall
-            end
-        else
-            -- Кеш устарел (мяч из лобби), очищаем
-            cachedBall = nil
-        end
-    end
-
-    -- throttle поиска (если не принудительный)
-    if not forceSearch and tick() - lastBallSearch < ballSearchInterval then
-        return cachedBall -- возвращаем кеш даже если он устарел
-    end
-    lastBallSearch = tick()
-
-    local found = nil
-    local player = Players.LocalPlayer
-    local char = player and player.Character
-    local playerPos = char and char:FindFirstChild("HumanoidRootPart") and char.HumanoidRootPart.Position
-    
-    -- Функция для проверки, что мяч НЕ в лобби
-    local function isNotLobbyBall(v)
-        local full = v:GetFullName()
-        -- Строгая проверка на лобби в пути
-        if full:find("Lobby") or full:find("SoccerBalls") then
-            return false
-        end
-        -- Проверяем родительскую структуру
-        local parent = v.Parent
-        local depth = 0
-        while parent and parent ~= workspace and depth < 5 do
-            if parent.Name == "Lobby" or parent.Name == "SoccerBalls" then
-                return false
-            end
-            parent = parent.Parent
-            depth = depth + 1
-        end
-        -- Проверяем, что мяч на разумной высоте (не слишком низко и не слишком высоко - это может быть лобби)
-        local ballY = v.Position.Y
-        if ballY < -100 or ballY > 500 then
-            return false
-        end
-        return true
-    end
-    
-    -- Попытка 1: Ищем через AwayPosition/HomePosition (если они есть)
-    local awayPos = workspace:FindFirstChild("AwayPosition")
-    local homePos = workspace:FindFirstChild("HomePosition")
-    if (awayPos or homePos) and playerPos then
-        local searchRadius = 1000 -- большой радиус поиска
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v:IsA("BasePart") and v.Name == "SoccerBall" and isNotLobbyBall(v) then
-                local dist = (v.Position - playerPos).Magnitude
-                if dist < searchRadius then
-                    found = v
-                    break
-                end
+local function getBall()
+    for _, player in pairs(game.Players:GetPlayers()) do
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local hrp = char.HumanoidRootPart
+            local ballFolder = hrp:FindFirstChild("Ball")
+            if ballFolder and ballFolder:FindFirstChild("ball") then
+                return ballFolder.ball
             end
         end
     end
-    
-    -- Попытка 2: Ищем ближайший мяч к игроку (если есть позиция и не нашли в попытке 1)
-    if not found and playerPos then
-        local closestBall = nil
-        local closestDist = math.huge
-        
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v:IsA("BasePart") and v.Name == "SoccerBall" and isNotLobbyBall(v) then
-                local dist = (v.Position - playerPos).Magnitude
-                -- Убрали ограничение 500 studs - ищем любые мячи
-                if dist < closestDist then
-                    closestDist = dist
-                    closestBall = v
-                end
-            end
-        end
-        
-        if closestBall then
-            found = closestBall
-        end
-    end
-    
-    -- Попытка 3: Ищем движущиеся мячи (если не нашли)
-    if not found then
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v:IsA("BasePart") and v.Name == "SoccerBall" and isNotLobbyBall(v) then
-                if v.AssemblyLinearVelocity and v.AssemblyLinearVelocity.Magnitude > 0.1 then
-                    found = v
-                    break
-                end
-            end
-        end
-    end
-    
-    -- Попытка 4: Берем любой не-лобби мяч на разумной высоте (последняя попытка)
-    if not found then
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v:IsA("BasePart") and v.Name == "SoccerBall" and isNotLobbyBall(v) then
-                found = v
-                break
-            end
-        end
-    end
-
-    cachedBall = found
-    return found
+    return nil
 end
 
--- =========================
--- ПОИСК ВОРОТ (КЕШИРОВАННЫЙ)
--- =========================
-local function findMyGoal()
-    local player = Players.LocalPlayer
-    if not player then return nil end
+local function getMyGoal()
+    local player = game.Players.LocalPlayer
     local char = player.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
-    
+
     local hrp = char.HumanoidRootPart
-    local playerPos = hrp.Position
-    
-    local away = workspace:FindFirstChild("AwayPosition")
-    local home = workspace:FindFirstChild("HomePosition")
-    
-    local awayGoal = away and away:FindFirstChild("GoalieCenter")
-    local homeGoal = home and home:FindFirstChild("GoalieCenter")
-    
-    -- Определяем ближайшие ворота как ВАШИ
-    if awayGoal and awayGoal:IsA("BasePart") and homeGoal and homeGoal:IsA("BasePart") then
-        local distToAway = (awayGoal.Position - playerPos).Magnitude
-        local distToHome = (homeGoal.Position - playerPos).Magnitude
-        return distToAway < distToHome and awayGoal or homeGoal
-    elseif awayGoal and awayGoal:IsA("BasePart") then
-        return awayGoal
-    elseif homeGoal and homeGoal:IsA("BasePart") then
-        return homeGoal
-    end
-    
-    -- Если не нашли через AwayPosition/HomePosition, ищем любой GoalieCenter ближайший к игроку
+    local awayGoal = workspace:FindFirstChild("AwayPosition")
+    local homeGoal = workspace:FindFirstChild("HomePosition")
+
     local closestGoal = nil
     local closestDist = math.huge
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v.Name == "GoalieCenter" and v:IsA("BasePart") then
-            local dist = (v.Position - playerPos).Magnitude
+
+    for _, goal in pairs({awayGoal, homeGoal}) do
+        if goal and goal:FindFirstChild("GoalieCenter") then
+            local dist = (hrp.Position - goal.GoalieCenter.Position).Magnitude
             if dist < closestDist then
                 closestDist = dist
-                closestGoal = v
+                closestGoal = goal.GoalieCenter
             end
         end
     end
-    
+
     return closestGoal
 end
 
-local function getMyGoalCached()
-    local player = Players.LocalPlayer
-    if not player then return nil end
-    local char = player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
-    
-    -- Проверяем кеш
-    if cachedGoal and cachedGoal.Parent and cachedGoal:IsA("BasePart") then
-        local hrp = char.HumanoidRootPart
-        local dist = (cachedGoal.Position - hrp.Position).Magnitude
-        -- Если ворота слишком далеко (более 200 studs), перепроверяем
-        if dist < 200 then
-            return cachedGoal
-        end
-    end
-
-    if tick() - lastGoalCheck < goalCheckInterval then
-        return cachedGoal
-    end
-    lastGoalCheck = tick()
-
-    cachedGoal = findMyGoal()
-    return cachedGoal
-end
-
--- =========================
--- ПРЕДСКАЗАНИЕ ТРАЕКТОРИИ МЯЧА
--- =========================
-local function predictBallPosition(ball, timeAhead)
-    if not ball then return nil end
-    local vel = ball.AssemblyLinearVelocity
-    if not vel then vel = Vector3.new(0,0,0) end
-    -- если скорость почти нулевая — возвращаем текущую позицию
-    if vel.Magnitude < 0.5 then
-        return ball.Position
-    end
-    -- простая предсказательная модель: pos + vel * t
-    return ball.Position + (vel * timeAhead)
-end
-
--- =========================
--- ОЧИСТКА BODYVELOCITY
--- =========================
-local function removeBV(ball)
-    if ball and ball:FindFirstChild("BV_Magnet") then
-        safeDestroy(ball.BV_Magnet)
-    end
-end
-
--- =========================
--- ОСНОВНОЙ ЦИКЛ (оптимизирован)
--- =========================
+local RunService = game:GetService("RunService")
 local connection
 
 local function startMagnet()
-    if connection then
-        connection:Disconnect()
-        connection = nil
-    end
+    if connection then connection:Disconnect() end
 
-    connection = RunService.Heartbeat:Connect(function(dt)
-        -- Защита от ошибок
-        local success, err = pcall(function()
-            if tick() - lastUpdate < logicInterval then return end
-            lastUpdate = tick()
+    connection = RunService.Heartbeat:Connect(function()
+        local player = game.Players.LocalPlayer
+        local char = player.Character
+        if not char then return end
 
-            -- Обновление визуалов (редко)
-            if Settings.ShowRadius then
-                updateRadiusVisual()
-            end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
 
-            local player = Players.LocalPlayer
-            if not player then return end
-            local char = player.Character
-            if not char then return end
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
+        local ball = getBall()
+        if not ball then return end
 
-            -- Обновляем зону вратаря возле него (если включен авто-сейв)
-            if Settings.AutoSave and goalkeeperZone then
-                updateGoalkeeperZonePosition(hrp.Position)
-            end
+        if Settings.AutoSave then
+            local myGoal = getMyGoal()
+            if myGoal then
+                local distBallToGoal = (myGoal.Position - ball.Position).Magnitude
+                local distPlayerToGoal = (myGoal.Position - hrp.Position).Magnitude
+                local ballVelocity = ball.AssemblyLinearVelocity
+                local directionToGoal = (myGoal.Position - ball.Position).Unit
+                local ballDirection = ballVelocity.Unit
+                local dotProduct = directionToGoal:Dot(ballDirection)
+                local now = tick()
 
-            -- используем кэшированный мяч / ворота
-            local ball = getBallCached()
-            -- Принудительно ищем мяч если его нет в кеше ИЛИ если он из лобби
-            if not ball or (ball and ball:GetFullName():find("Lobby")) then
-                cachedBall = nil -- очищаем кеш если это мяч из лобби
-                ball = getBallCached(true) -- принудительный поиск
-            end
-            local myGoal = getMyGoalCached()
+                if distBallToGoal <= Settings.SaveDistance and ballVelocity.Magnitude > 5 and dotProduct > 0.3 and now - lastSaveTime > 0.5 then
+                    lastSaveTime = now
+                    local saveDirection = (ball.Position - myGoal.Position).Unit
+                    saveDirection = Vector3.new(saveDirection.X, 0.3, saveDirection.Z).Unit
+                    ball.AssemblyLinearVelocity = saveDirection * Settings.SaveSpeed
 
-            -- =========================
-            -- АВТО-СЕЙВ (вратарь)
-            -- =========================
-            if Settings.AutoSave and myGoal then
-                -- Если мяч не найден или это мяч из лобби, пытаемся найти его принудительно
-                if not ball or (ball and ball:GetFullName():find("Lobby")) then
-                    cachedBall = nil
-                    ball = getBallCached(true)
-                end
-                
-                -- Авто-голкипер работает даже если мяч не найден - используем позицию ворот как точку ожидания
-                if ball and not ball:GetFullName():find("Lobby") then
-                    -- Вычисляем направление к воротам
-                    local toGoal = (myGoal.Position - ball.Position)
-                    local distToGoalNow = toGoal.Magnitude
-                    
-                    -- Проверяем, летит ли мяч в сторону ворот
-                    local ballVel = ball.AssemblyLinearVelocity
-                    local ballVelMag = (ballVel and ballVel.Magnitude) or 0
-                    
-                    -- Если мяч движется к воротам (скалярное произведение положительное)
-                    local ballToGoalDir = (distToGoalNow > 0.01) and toGoal.Unit or Vector3.new(0, 0, 0)
-                    local ballMovingToGoal = false
-                    if ballVelMag > 5 then
-                        local velDir = ballVel.Unit
-                        local dot = velDir:Dot(ballToGoalDir)
-                        ballMovingToGoal = dot > 0.3 -- мяч движется в сторону ворот
+                    if Settings.AutoMove and distPlayerToGoal < Settings.SaveDistance then
+                        local moveTo = ball.Position
+                        local newPos = hrp.Position:Lerp(moveTo, 0.1)
+                        hrp.CFrame = CFrame.new(newPos, moveTo)
                     end
-                    
-                    -- Если мяч близко к воротам ИЛИ движется к воротам
-                    if distToGoalNow <= Settings.SaveDistance * 2 or (ballMovingToGoal and distToGoalNow <= Settings.SaveDistance * 3) then
-                        -- Улучшенное предсказание траектории
-                        local timeAhead = math.clamp(distToGoalNow / math.max(ballVelMag, 10), 0.1, 1.0)
-                        local predictedPos = predictBallPosition(ball, timeAhead)
-                        
-                        if predictedPos then
-                            local distPredToGoal = (predictedPos - myGoal.Position).Magnitude
-                            local distPredToGoalkeeper = (predictedPos - hrp.Position).Magnitude
-                            
-                            -- Если предсказанная позиция попадает в зону защиты (более широкий радиус)
-                            if distPredToGoal <= Settings.SaveDistance * 1.5 or distPredToGoalkeeper <= Settings.SaveDistance * 1.2 then
-                                -- Оптимальная точка перехвата
-                                local intercept = predictedPos + Vector3.new(0, 2.5, 0)
-                                
-                                -- Вычисляем расстояние до точки перехвата
-                                local distToIntercept = (intercept - hrp.Position).Magnitude
-                                
-                                -- Более агрессивное движение к точке перехвата (увеличенная скорость)
-                                local lerpSpeed = math.clamp(distToIntercept / 8, 0.4, 0.85)
-                                local targetCFrame = CFrame.new(intercept, ball.Position)
-                                hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, lerpSpeed)
-                                
-                                -- При AutoMove - дополнительное движение к мячу
-                                if Settings.AutoMove and distToIntercept > 2 then
-                                    local moveToBall = ball.Position + Vector3.new(0, 2, -1.5)
-                                    hrp.CFrame = hrp.CFrame:Lerp(CFrame.new(moveToBall, ball.Position), 0.3)
-                                end
-                                
-                                -- Прыжок для перехвата (более часто)
-                                local hum = char:FindFirstChildOfClass("Humanoid")
-                                if hum and distToIntercept < 6 then
-                                    if math.random(1, 2) == 1 then
-                                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-                                    end
-                                end
-                                
-                                -- Уведомление о сейве
-                                if math.random(1, 12) == 1 then
-                                    Rayfield:Notify({
-                                        Title = "🥅 СЕЙВ!",
-                                        Content = "Вратарь перехватил мяч",
-                                        Duration = 1
-                                    })
-                                end
-                            end
-                        end
-                    end
-                elseif Settings.AutoSave and myGoal then
-                    -- Мяч не найден - но голкипер все равно должен стоять у ворот
-                    -- Плавно двигаемся к позиции ворот
-                    local distToGoal = (myGoal.Position - hrp.Position).Magnitude
-                    if distToGoal > 5 then
-                        local goalCFrame = myGoal.CFrame * CFrame.new(0, 2, 3)
-                        hrp.CFrame = hrp.CFrame:Lerp(goalCFrame, 0.15)
-                    end
+
+                    Rayfield:Notify({
+                        Title = "🥅 СЕЙВ!",
+                        Content = "Мяч отбит!",
+                        Duration = 1
+                    })
                 end
             end
+        end
 
-            -- =========================
-            -- МАГНИТ МЯЧА
-            -- =========================
-            if Settings.MagnetEnabled and ball and not ball:GetFullName():find("Lobby") then
-                local distance = (hrp.Position - ball.Position).Magnitude
-
-                if distance <= Settings.Range then
-                    local ballVel = ball.AssemblyLinearVelocity
-                    local ballVelMag = (ballVel and ballVel.Magnitude) or 0
-                    local direction = (hrp.Position - ball.Position)
-                    
-                    if direction.Magnitude > 0.01 then
-                        direction = direction.Unit
-                        
-                        if Settings.Method == "Физическая сила" then
-                            -- Улучшенная физическая сила с учетом расстояния
-                            pcall(function()
-                                local strengthMultiplier = 1 - (distance / Settings.Range) -- сильнее ближе
-                                local speed = math.clamp(distance * 2.5 * strengthMultiplier, 25, Settings.Strength)
-                                local targetVel = direction * speed
-                                if ball.AssemblyLinearVelocity then
-                                    ball.AssemblyLinearVelocity = ball.AssemblyLinearVelocity:Lerp(targetVel, 0.4)
-                                end
-                            end)
-
-                        elseif Settings.Method == "Жесткое прилипание" then
-                            -- Привязка рядом с игроком
-                            pcall(function()
-                                local attachCFrame = hrp.CFrame * CFrame.new(0, -2.5, -3)
-                                ball.CFrame = attachCFrame
-                                if ball.AssemblyLinearVelocity then
-                                    ball.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                                end
-                                if ball.AssemblyAngularVelocity then
-                                    ball.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                                end
-                                removeBV(ball)
-                            end)
-
-                        elseif Settings.Method == "Векторный захват" then
-                            -- Используем BodyVelocity для надежного притяжения
-                            pcall(function()
-                                if not ball:FindFirstChild("BV_Magnet") then
-                                    local bv = Instance.new("BodyVelocity")
-                                    bv.Name = "BV_Magnet"
-                                    bv.MaxForce = Vector3.new(400000, 400000, 400000)
-                                    bv.Velocity = Vector3.new(0, 0, 0)
-                                    bv.Parent = ball
-                                end
-                                local bv = ball:FindFirstChild("BV_Magnet")
-                                if bv then
-                                    -- Динамическая скорость в зависимости от расстояния
-                                    local strengthMultiplier = 1 - (distance / Settings.Range)
-                                    local speed = math.clamp(Settings.Strength * strengthMultiplier, 50, Settings.Strength)
-                                    bv.Velocity = direction * speed
-                                end
-                            end)
-
-                        elseif Settings.Method == "Плавное притяжение" then
-                            -- Улучшенное плавное притяжение
-                            pcall(function()
-                                local strengthMultiplier = 1 - (distance / Settings.Range)
-                                local targetVel = direction * Settings.Strength * strengthMultiplier
-                                local cur = ball.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
-                                -- Более агрессивная интерполяция для лучшего эффекта
-                                local lerpSpeed = math.clamp(0.15 + (strengthMultiplier * 0.15), 0.15, 0.3)
-                                if ball.AssemblyLinearVelocity then
-                                    ball.AssemblyLinearVelocity = cur:Lerp(targetVel, lerpSpeed)
-                                end
-                                removeBV(ball)
-                            end)
-                        end
+        if Settings.MagnetEnabled then
+            local distance = (hrp.Position - ball.Position).Magnitude
+            if distance <= Settings.Range then
+                if Settings.Method == "Физическая сила" then
+                    local direction = (hrp.Position - ball.Position).Unit
+                    local speed = math.clamp(distance * 2, 20, Settings.Strength)
+                    ball.AssemblyLinearVelocity = direction * speed
+                elseif Settings.Method == "Жесткое прилипание" then
+                    ball.CFrame = hrp.CFrame * CFrame.new(0, -2.5, -3)
+                    ball.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity
+                    ball.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                elseif Settings.Method == "Векторный захват" then
+                    if not ball:FindFirstChild("BV_Magnet") then
+                        local bv = Instance.new("BodyVelocity")
+                        bv.Name = "BV_Magnet"
+                        bv.MaxForce = Vector3.new(5e4, 5e4, 5e4)
+                        bv.Parent = ball
                     end
-                else
-                    -- вне радиуса: удаляем BV
-                    removeBV(ball)
+                    local bv = ball:FindFirstChild("BV_Magnet")
+                    if bv then
+                        bv.Velocity = (hrp.Position - ball.Position).Unit * 70
+                    end
+                elseif Settings.Method == "Плавное притяжение" then
+                    local direction = (hrp.Position - ball.Position).Unit
+                    local currentVel = ball.AssemblyLinearVelocity
+                    local targetVel = direction * Settings.Strength
+                    ball.AssemblyLinearVelocity = currentVel:Lerp(targetVel, 0.3)
                 end
             else
-                -- магнит выключен - чистим BV у кэшированного мяча
-                if cachedBall then removeBV(cachedBall) end
+                if ball:FindFirstChild("BV_Magnet") then
+                    ball.BV_Magnet:Destroy()
+                end
             end
-        end) -- конец pcall
-        
-        if not success and err then
-            warn("[RSS] Ошибка в основном цикле:", err)
         end
     end)
 end
 
--- стартуем логику
 startMagnet()
-
--- =========================
--- UI (Rayfield) - элементы и их коллбэки
--- =========================
-Tab:CreateToggle({
-   Name = "🧲 Включить Магнит",
-   CurrentValue = Settings.MagnetEnabled,
-   Callback = function(Value) 
-       Settings.MagnetEnabled = Value 
-       if Value then
-           -- Принудительно ищем мяч при включении
-           cachedBall = nil
-           getBallCached(true)
-           Rayfield:Notify({
-               Title = "✅ Магнит активирован", 
-               Content = "Радиус: " .. Settings.Range .. "м", 
-               Duration = 3
-           })
-       else
-           if cachedBall then removeBV(cachedBall) end
-           Rayfield:Notify({Title = "❌ Магнит деактивирован", Content = "", Duration = 2})
-       end
-   end,
-})
-
-Tab:CreateToggle({
-   Name = "👁️ Показать радиус действия",
-   CurrentValue = Settings.ShowRadius,
-   Callback = function(Value) 
-       Settings.ShowRadius = Value 
-       if Value then
-           createRadiusVisual()
-       else
-           safeDestroy(radiusPart)
-           radiusPart = nil
-       end
-   end,
-})
-
-Tab:CreateDropdown({
-   Name = "⚙️ Метод притяжения",
-   Options = {"Физическая сила", "Жесткое прилипание", "Векторный захват", "Плавное притяжение"},
-   CurrentValue = Settings.Method,
-   Callback = function(Option) 
-       Settings.Method = Option 
-       if cachedBall then removeBV(cachedBall) end
-   end,
-})
-
-Tab:CreateSlider({
-   Name = "📏 Дистанция захвата",
-   Range = {10, 100},
-   Increment = 5,
-   CurrentValue = Settings.Range,
-   Callback = function(Value) 
-       Settings.Range = Value 
-       if radiusPart then
-           radiusPart.Size = Vector3.new(Value * 2, Value * 2, Value * 2)
-       end
-   end,
-})
-
-Tab:CreateSlider({
-   Name = "💪 Сила магнита",
-   Range = {10, 150},
-   Increment = 5,
-   CurrentValue = Settings.Strength,
-   Callback = function(Value) Settings.Strength = Value end,
-})
-
-Tab:CreateSection("🔧 Дополнительные функции")
-
-Tab:CreateButton({
-   Name = "🔍 Найти мяч (дебаг)",
-   Callback = function()
-       -- Принудительный поиск мяча
-       cachedBall = nil -- очищаем кеш
-       local ball = getBallCached(true) -- принудительный поиск
-       if ball then
-           local char = Players.LocalPlayer.Character
-           if char and char:FindFirstChild("HumanoidRootPart") then
-               local dist = (char.HumanoidRootPart.Position - ball.Position).Magnitude
-               local vel = ball.AssemblyLinearVelocity
-               local velMag = vel and vel.Magnitude or 0
-               Rayfield:Notify({
-                   Title = "✅ Игровой мяч найден!", 
-                   Content = "Дистанция: " .. math.floor(dist) .. "м | Скорость: " .. math.floor(velMag) .. " | " .. ball:GetFullName(), 
-                   Duration = 6
-               })
-           else
-               Rayfield:Notify({
-                   Title = "✅ Мяч найден", 
-                   Content = "Но персонаж не загружен | " .. ball:GetFullName(), 
-                   Duration = 4
-               })
-           end
-       else
-           -- Пробуем найти все мячи для дебага (только НЕ из лобби)
-           local allBalls = {}
-           local lobbyBalls = {}
-           for _, v in ipairs(workspace:GetDescendants()) do
-               if v:IsA("BasePart") and v.Name == "SoccerBall" then
-                   local full = v:GetFullName()
-                   if full:find("Lobby") or full:find("SoccerBalls") then
-                       table.insert(lobbyBalls, full)
-                   else
-                       table.insert(allBalls, full)
-                   end
-               end
-           end
-           local debugInfo = "Игровых мячей: " .. #allBalls .. " | Лобби мячей: " .. #lobbyBalls
-           if #allBalls > 0 then
-               debugInfo = debugInfo .. "\nПервый игровой: " .. allBalls[1]
-           elseif #lobbyBalls > 0 then
-               debugInfo = debugInfo .. "\nНайден только лобби: " .. lobbyBalls[1] .. "\nЗайдите в матч!"
-           end
-           Rayfield:Notify({
-               Title = "❌ Игровой мяч не найден", 
-               Content = debugInfo, 
-               Duration = 6
-           })
-       end
-   end,
-})
-
-Tab:CreateButton({
-   Name = "📍 Телепорт к мячу",
-   Callback = function()
-       local ball = getBallCached()
-       local char = Players.LocalPlayer.Character
-       if ball and char and char:FindFirstChild("HumanoidRootPart") then
-           char.HumanoidRootPart.CFrame = ball.CFrame * CFrame.new(0, 5, 0)
-           Rayfield:Notify({Title = "✅ Телепорт выполнен", Content = "", Duration = 2})
-       else
-           Rayfield:Notify({Title = "⚠️ Не удалось телепортировать", Content = "Мяч или персонаж не найден", Duration = 2})
-       end
-   end,
-})
-
--- Вкладка вратаря
-TabGoalkeeper:CreateToggle({
-   Name = "🥅 Авто-сейв (Вратарь)",
-   CurrentValue = Settings.AutoSave,
-   Callback = function(Value) 
-       Settings.AutoSave = Value 
-           if Value then
-               -- Принудительно ищем мяч и ворота при включении
-               cachedBall = nil
-               cachedGoal = nil
-               getBallCached(true)
-               getMyGoalCached()
-               
-               Rayfield:Notify({
-                   Title = "🥅 Режим вратаря активирован", 
-                   Content = "Встаньте в ворота! Скрипт попытается отбивать мячи", 
-                   Duration = 4
-               })
-               -- создаём визуальную зону возле вратаря
-               if not goalkeeperZone then 
-                   createGoalkeeperZone()
-                   local char = Players.LocalPlayer.Character
-                   if char and char:FindFirstChild("HumanoidRootPart") then
-                       goalkeeperZone.Position = char.HumanoidRootPart.Position
-                   end
-               end
-       else
-           Rayfield:Notify({
-               Title = "❌ Авто-сейв выключен", 
-               Content = "", 
-               Duration = 2
-           })
-           safeDestroy(goalkeeperZone)
-           goalkeeperZone = nil
-       end
-   end,
-})
-
-TabGoalkeeper:CreateToggle({
-   Name = "🏃 Автодвижение к мячу",
-   CurrentValue = Settings.AutoMove,
-   Callback = function(Value) 
-       Settings.AutoMove = Value 
-   end,
-})
-
-TabGoalkeeper:CreateSlider({
-   Name = "📏 Радиус защиты ворот",
-   Range = {10, 40},
-   Increment = 1,
-   CurrentValue = Settings.SaveDistance,
-   Callback = function(Value)
-       Settings.SaveDistance = Value
-       if goalkeeperZone then
-           goalkeeperZone.Size = Vector3.new(Value * 2, Value * 2, Value * 2)
-       end
-   end,
-})
-
-TabGoalkeeper:CreateSlider({
-   Name = "⚡ Скорость отбивания (визуальная)",
-   Range = {60, 250},
-   Increment = 5,
-   CurrentValue = Settings.SaveSpeed,
-   Callback = function(Value) Settings.SaveSpeed = Value end,
-})
-
-TabGoalkeeper:CreateToggle({
-   Name = "👁️ Показать зону защиты",
-   CurrentValue = (goalkeeperZone ~= nil),
-   Callback = function(Value) 
-       if Value then
-           if not goalkeeperZone then createGoalkeeperZone() end
-       else
-           safeDestroy(goalkeeperZone)
-           goalkeeperZone = nil
-       end
-   end,
-})
-
-TabGoalkeeper:CreateSection("ℹ️ Информация")
-
-TabGoalkeeper:CreateParagraph({
-   Title = "Как работает авто-сейв?",
-   Content = "Встаньте в ворота (GoalieCenter). Скрипт предсказывает траекторию мяча и мягко выводит вратаря на перехват. Скрипт не трогает физику мяча напрямую — это повышает стабильность и снижает шанс отката сервером."
-})
-
-TabGoalkeeper:CreateButton({
-   Name = "🎯 Найти ворота (дебаг)",
-   Callback = function()
-       local goal = getMyGoalCached() or findMyGoal()
-       if goal then
-           local char = Players.LocalPlayer.Character
-           if char and char:FindFirstChild("HumanoidRootPart") then
-           local dist = (char.HumanoidRootPart.Position - goal.Position).Magnitude
-               Rayfield:Notify({
-                   Title = "✅ Ваши ворота найдены",
-                   Content = "Дистанция до ворот: " .. math.floor(dist) .. "м",
-                   Duration = 5
-               })
-           else
-               Rayfield:Notify({
-                   Title = "⚠️ Ворота найдены",
-                   Content = "Но персонаж не загружен",
-                   Duration = 3
-               })
-           end
-       else
-           Rayfield:Notify({
-               Title = "⚠️ Ворота не найдены",
-               Content = "Зайдите в матч!",
-               Duration = 3
-           })
-       end
-   end,
-})
-
-TabGoalkeeper:CreateButton({
-   Name = "📍 Телепорт в ворота",
-   Callback = function()
-       local goal = getMyGoalCached() or findMyGoal()
-       local char = Players.LocalPlayer.Character
-       if goal and char and char:FindFirstChild("HumanoidRootPart") then
-           char.HumanoidRootPart.CFrame = goal.CFrame * CFrame.new(0, 3, 5)
-           Rayfield:Notify({
-               Title = "✅ Вы в воротах!",
-               Content = "",
-               Duration = 2
-           })
-       else
-           Rayfield:Notify({
-               Title = "⚠️ Не удалось телепортировать",
-               Content = "Ворота или персонаж не найдены",
-               Duration = 2
-           })
-       end
-   end,
-})
-
--- =========================
--- ОЧИСТКА ПРИ ВЫХОДЕ
--- =========================
-local function cleanupAll()
-    if connection then
-        connection:Disconnect()
-        connection = nil
-    end
-
-    if radiusPart then
-        radiusPart:Destroy()
-        radiusPart = nil
-    end
-
-    if goalkeeperZone then
-        goalkeeperZone:Destroy()
-        goalkeeperZone = nil
-    end
-
-    if cachedBall and cachedBall:FindFirstChild("BV_Magnet") then
-        cachedBall.BV_Magnet:Destroy()
-    end
-end
-
-pcall(function()
-    Rayfield:SetWindowClosedCallback(cleanupAll)
-end)
-
-print("[RSS] Скрипт полностью загружен и работает.")
