@@ -178,29 +178,22 @@ statusBtn.MouseButton1Click:Connect(function()
     updateUI()
 end)
 
--- FIXED SLIDER - Mobile Support
+-- FIXED MOBILE SLIDER (только добавил Touch поддержку)
 local dragging = false
 sliderBg.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
-    end
-end)
-
-sliderBg.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local mouse = lp:GetMouse()
+        repeat
+            local scale = math.clamp(
+                (mouse.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X,
+                0, 1
+            )
+            Settings.HitboxSize = math.floor(scale * Settings.MaxHitboxSize)
+            updateUI()
+            task.wait()
+        until not (mouse.Button1Down or UserInputService:IsMouseButtonPressed(Enum.UserInputType.Touch))
         dragging = false
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local mousePos = UserInputService:GetMouseLocation()
-        local scale = math.clamp(
-            (mousePos.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X,
-            0, 1
-        )
-        Settings.HitboxSize = math.floor(scale * Settings.MaxHitboxSize)
-        updateUI()
     end
 end)
 
@@ -228,4 +221,4 @@ if isMobile then
     closeBtn.TextSize = 22
 end
 
-print("✅ Hitbox Loaded - Toggle button at top-left") 
+print("✅ Hitbox Loaded - Toggle button at top-left - Mobile slider fixed!") 
