@@ -1,4 +1,4 @@
--- ⚽ Hitbox Control (Fixed & Optimized)
+-- ⚽ Hitbox Control (Centered & Draggable)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -9,7 +9,7 @@ local lp = Players.LocalPlayer
 local Settings = {
     Enabled = false,
     Power = 85,
-    Cooldown = 0.2, -- Немного уменьшил задержку для плавности
+    Cooldown = 0.2,
     HitboxSize = 12,
     MaxHitboxSize = 35
 }
@@ -17,7 +17,6 @@ local Settings = {
 local lastKick = 0
 
 -- ========= BALL FINDER =========
--- Улучшенный поиск мяча: ищет детали с именем Ball или TouchBall
 local function getBall()
     for _, obj in ipairs(workspace:GetChildren()) do
         if obj:IsA("BasePart") and (obj.Name:lower():find("ball")) then
@@ -28,7 +27,6 @@ local function getBall()
 end
 
 -- ========= HITBOX SPHERE =========
--- Удаляем старую сферу, если она осталась от прошлого запуска
 if workspace:FindFirstChild("HitboxSphere_System") then
     workspace.HitboxSphere_System:Destroy()
 end
@@ -52,24 +50,19 @@ end
 -- ========= HIT LOGIC =========
 RunService.Heartbeat:Connect(function()
     if not Settings.Enabled then return end
-
     local char = lp.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    -- Сфера летит чуть впереди игрока
     sphere.CFrame = root.CFrame * CFrame.new(0, 0, -2)
 
     local ball = getBall()
     if not ball then return end
     if tick() - lastKick < Settings.Cooldown then return end
 
-    -- Дистанция до мяча
     local dist = (ball.Position - sphere.Position).Magnitude
     if dist <= (Settings.HitboxSize / 2) then
         lastKick = tick()
-        
-        -- Направление удара (вперед от игрока + немного вверх)
         local dir = (ball.Position - root.Position).Unit
         ball.AssemblyLinearVelocity = (dir * Settings.Power) + Vector3.new(0, Settings.Power / 4, 0)
     end
@@ -78,68 +71,102 @@ end)
 -- ========= UI SETUP =========
 local gui = Instance.new("ScreenGui")
 gui.Name = "SimpleHitboxUI"
--- Пробуем вставить в CoreGui (для читов), если не выйдет - в PlayerGui
+gui.ResetOnSpawn = false
 local success, err = pcall(function() gui.Parent = game:GetService("CoreGui") end)
 if not success then gui.Parent = lp:WaitForChild("PlayerGui") end
 
--- Главная кнопка-переключатель
+-- Кнопка открытия
 local toggleBtn = Instance.new("TextButton", gui)
-toggleBtn.Size = UDim2.fromOffset(50, 50)
+toggleBtn.Size = UDim2.fromOffset(55, 55)
 toggleBtn.Position = UDim2.fromOffset(20, 150)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
 toggleBtn.Text = "⚽"
 toggleBtn.TextSize = 25
 toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-
 local btnCorner = Instance.new("UICorner", toggleBtn)
 btnCorner.CornerRadius = UDim.new(1, 0)
 
--- Меню
+-- МЕНЮ (Теперь по центру)
 local menu = Instance.new("Frame", gui)
-menu.Size = UDim2.fromOffset(180, 160)
-menu.Position = UDim2.new(0, 80, 0, 150)
+menu.Size = UDim2.fromOffset(200, 180)
+menu.Position = UDim2.new(0.5, 0, 0.5, 0) -- Центр экрана
+menu.AnchorPoint = Vector2.new(0.5, 0.5)   -- Точка привязки в центре
 menu.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
 menu.Visible = false
+menu.Active = true -- Нужно для перетаскивания
 
 local menuCorner = Instance.new("UICorner", menu)
 menuCorner.CornerRadius = UDim.new(0, 10)
 
--- Заголовок
+-- Логика перетаскивания (Drag Logic)
+local dragging, dragInput, dragStart, startPos
+local function update(input)
+    local delta = input.Position - dragStart
+    menu.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+menu.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = menu.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+menu.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        update(input)
+    end
+end)
+
+-- Элементы внутри меню
 local title = Instance.new("TextLabel", menu)
-title.Size = UDim2.new(1, 0, 0, 35)
+title.Size = UDim2.new(1, 0, 0, 40)
 title.BackgroundTransparency = 1
 title.Text = "HITBOX MENU"
 title.Font = Enum.Font.GothamBold
 title.TextColor3 = Color3.new(1, 1, 1)
+title.TextSize = 16
 
--- Кнопка Вкл/Выкл
 local statusBtn = Instance.new("TextButton", menu)
-statusBtn.Size = UDim2.new(0.8, 0, 0, 35)
-statusBtn.Position = UDim2.new(0.1, 0, 0, 45)
+statusBtn.Size = UDim2.new(0.85, 0, 0, 40)
+statusBtn.Position = UDim2.new(0.075, 0, 0, 50)
 statusBtn.Font = Enum.Font.GothamBold
 statusBtn.TextSize = 14
 statusBtn.TextColor3 = Color3.new(1, 1, 1)
-
 local statusCorner = Instance.new("UICorner", statusBtn)
 
--- Слайдер размера
 local sizeText = Instance.new("TextLabel", menu)
 sizeText.Size = UDim2.new(1, 0, 0, 20)
-sizeText.Position = UDim2.new(0, 0, 0, 90)
+sizeText.Position = UDim2.new(0, 0, 0, 100)
 sizeText.BackgroundTransparency = 1
 sizeText.TextColor3 = Color3.new(1, 1, 1)
 sizeText.Font = Enum.Font.Gotham
+sizeText.TextSize = 14
 
 local sliderBg = Instance.new("Frame", menu)
-sliderBg.Size = UDim2.new(0.8, 0, 0, 8)
-sliderBg.Position = UDim2.new(0.1, 0, 0, 120)
+sliderBg.Size = UDim2.new(0.85, 0, 0, 10)
+sliderBg.Position = UDim2.new(0.075, 0, 0, 135)
 sliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+local sliderCorner = Instance.new("UICorner", sliderBg)
 
 local sliderFill = Instance.new("Frame", sliderBg)
 sliderFill.Size = UDim2.new(0.5, 0, 1, 0)
 sliderFill.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
+local fillCorner = Instance.new("UICorner", sliderFill)
 
--- ========= FUNCTIONS =========
+-- ========= UI FUNCTIONS =========
 local function updateUI()
     if Settings.Enabled then
         statusBtn.Text = "STATUS: ON"
@@ -153,31 +180,31 @@ local function updateUI()
     updateSphere()
 end
 
--- Логика слайдера (Исправлено)
-local isDragging = false
+-- Слайдер
+local isSliding = false
 local function updateSlider(input)
     local relativeX = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
     Settings.HitboxSize = math.floor(relativeX * Settings.MaxHitboxSize)
-    if Settings.HitboxSize < 2 then Settings.HitboxSize = 2 end
+    if Settings.HitboxSize < 3 then Settings.HitboxSize = 3 end
     updateUI()
 end
 
 sliderBg.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        isDragging = true
+        isSliding = true
         updateSlider(input)
     end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-    if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+    if isSliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         updateSlider(input)
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        isDragging = false
+        isSliding = false
     end
 end)
 
@@ -190,6 +217,5 @@ toggleBtn.MouseButton1Click:Connect(function()
     menu.Visible = not menu.Visible
 end)
 
--- Начальный запуск
 updateUI()
-print("✅ Script Loaded! Ball search active.")
+print("✅ Centered & Draggable Hitbox Loaded!")
