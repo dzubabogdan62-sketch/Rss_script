@@ -1,237 +1,190 @@
+-- ================== SERVICES ==================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
+local UIS = game:GetService("UserInputService")
 local lp = Players.LocalPlayer
 
--- ========= SETTINGS =========
-local Settings = {
-    Enabled = false,
-    Power = 80,
-    Cooldown = 0.15,
-    HitboxSize = 12,
-    MaxHitboxSize = 40,
-    MaxPower = 200
+-- ================== SETTINGS ==================
+local CFG = {
+	Enabled = false,
+	Power = 85,
+	Cooldown = 0.25,
+	Size = 12,
+	MaxSize = 35,
+	Offset = CFrame.new(0, 0, -3)
 }
 
 local lastKick = 0
-local draggingSize = false
-local draggingPower = false
+local dragUI, dragSlider = false, false
 
--- ========= PHYSICS COLLISION SETUP =========
--- Создаем группу коллизий, чтобы сфера не толкала самого игрока
-local PhysicsService = game:GetService("PhysicsService")
-local groupName = "HitboxGroup"
-pcall(function() PhysicsService:CreateCollisionGroup(groupName) end)
-PhysicsService:CollisionGroupSetCollidable(groupName, groupName, false)
-
--- ========= BALL =========
+-- ================== BALL ==================
 local function getBall()
-    return workspace:FindFirstChild("ball") or workspace:FindFirstChild("TouchBall") or workspace:FindFirstChild("TPS")
+	return workspace:FindFirstChild("ball") or workspace:FindFirstChild("TouchBall")
 end
 
--- ========= THE "IMPENETRABLE" SPHERE =========
-local sphere = Instance.new("Part")
-sphere.Shape = Enum.PartType.Ball
-sphere.Anchored = true
-sphere.CanCollide = true -- ТЕПЕРЬ ОНА ФИЗИЧЕСКАЯ
-sphere.CanTouch = true
-sphere.CastShadow = false
-sphere.Material = Enum.Material.ForceField
-sphere.Color = Color3.fromRGB(0, 255, 255)
-sphere.Transparency = 1
-sphere.Parent = workspace
-sphere.Name = "RealHitbox"
+-- ================== HITBOX ==================
+local Hitbox = Instance.new("Part")
+Hitbox.Name = "SolidHitbox"
+Hitbox.Shape = Enum.PartType.Ball
+Hitbox.Anchored = true
+Hitbox.CanCollide = true -- 🔒 НЕПРОБИВАЕМЫЙ
+Hitbox.Material = Enum.Material.ForceField
+Hitbox.Color = Color3.fromRGB(0, 255, 120)
+Hitbox.Transparency = 1
+Hitbox.Parent = workspace
 
--- Чтобы игрок не падал от своей же сферы
-local function setNoCollide(char)
-    for _, part in pairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            PhysicsService:SetPartCollisionGroup(part, groupName)
-        end
-    end
-end
-if lp.Character then setNoCollide(lp.Character) end
-lp.CharacterAdded:Connect(setNoCollide)
-PhysicsService:SetPartCollisionGroup(sphere, groupName)
-
-local function updateSphere()
-    sphere.Size = Vector3.new(Settings.HitboxSize, Settings.HitboxSize, Settings.HitboxSize)
-    sphere.Transparency = Settings.Enabled and 0.6 or 1
-    sphere.CanCollide = Settings.Enabled -- Становится твердой только при включении
+local function updateHitbox()
+	Hitbox.Size = Vector3.one * CFG.Size
+	Hitbox.Transparency = CFG.Enabled and 0.45 or 1
 end
 
+updateHitbox()
+
+-- ================== CORE LOGIC ==================
 RunService.Heartbeat:Connect(function()
-    local char = lp.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    
-    if not Settings.Enabled or not root then 
-        sphere.Transparency = 1
-        sphere.CanCollide = false
-        sphere.Position = Vector3.new(0, -500, 0) -- Прячем под карту
-        return 
-    end
+	if not CFG.Enabled then return end
 
-    -- Позиция: немного впереди игрока
-    sphere.CFrame = root.CFrame * CFrame.new(0, 0, -2)
-    sphere.Transparency = 0.6
-    sphere.CanCollide = true
+	local char = lp.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then return end
 
-    local ball = getBall()
-    if ball and ball:IsA("BasePart") then
-        local dist = (ball.Position - sphere.Position).Magnitude
-        if dist <= (Settings.HitboxSize / 2) + 2 and (tick() - lastKick > Settings.Cooldown) then
-            lastKick = tick()
-            
-            -- Расчет направления: куда смотрит игрок + небольшой подъем вверх
-            local lookDir = root.CFrame.LookVector
-            local targetVelocity = (lookDir + Vector3.new(0, 0.2, 0)).Unit * Settings.Power
-            
-            ball.AssemblyLinearVelocity = targetVelocity
-            -- Эффект импульса для надежности
-            local velocityBoost = Instance.new("BodyVelocity")
-            velocityBoost.MaxForce = Vector3.new(1,1,1) * 1e6
-            velocityBoost.Velocity = targetVelocity
-            velocityBoost.Parent = ball
-            game.Debris:AddItem(velocityBoost, 0.1)
-        end
-    end
+	Hitbox.CFrame = root.CFrame * CFG.Offset
+
+	local ball = getBall()
+	if not (ball and ball:IsA("BasePart")) then return end
+	if tick() - lastKick < CFG.Cooldown then return end
+
+	local dist = (ball.Position - Hitbox.Position).Magnitude
+	if dist <= (CFG.Size / 2) then
+		lastKick = tick()
+
+		-- 🔥 УМНЫЙ УДАР
+		local moveBoost = root.AssemblyLinearVelocity.Magnitude * 0.25
+		local dir = (ball.Position - root.Position + Vector3.new(0, 1.2, 0)).Unit
+
+		ball.AssemblyLinearVelocity =
+			dir * (CFG.Power + moveBoost) + Vector3.new(0, 18, 0)
+
+		-- ⚙️ Стабилизация
+		ball.AssemblyAngularVelocity *= 0.4
+	end
 end)
 
--- ========= UI SYSTEM (MOBILE OPTIMIZED) =========
-if game.CoreGui:FindFirstChild("ModernHitboxUI") then
-    game.CoreGui.ModernHitboxUI:Destroy()
+-- ================== UI ==================
+if game.CoreGui:FindFirstChild("HitboxMobileUI") then
+	game.CoreGui.HitboxMobileUI:Destroy()
 end
 
-local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
-ScreenGui.Name = "ModernHitboxUI"
+local GUI = Instance.new("ScreenGui", game.CoreGui)
+GUI.Name = "HitboxMobileUI"
 
-local OpenButton = Instance.new("TextButton", ScreenGui)
-OpenButton.Size = UDim2.fromOffset(60, 60)
-OpenButton.Position = UDim2.new(0, 10, 0.5, -30)
-OpenButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-OpenButton.Text = "🛡️"
-OpenButton.TextSize = 30
-Instance.new("UICorner", OpenButton).CornerRadius = UDim.new(1, 0)
-Instance.new("UIStroke", OpenButton).Color = Color3.fromRGB(0, 255, 255)
+-- === OPEN BUTTON ===
+local Open = Instance.new("TextButton", GUI)
+Open.Size = UDim2.fromOffset(50, 50)
+Open.Position = UDim2.new(0, 20, 0.4, 0)
+Open.Text = "⚽"
+Open.Font = Enum.Font.GothamBold
+Open.TextSize = 24
+Open.BackgroundColor3 = Color3.fromRGB(30,30,35)
+Open.TextColor3 = Color3.fromRGB(0,255,120)
+Instance.new("UICorner", Open).CornerRadius = UDim.new(0,12)
 
-local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.fromOffset(250, 320)
-MainFrame.Position = UDim2.new(0.5, -125, 0.5, -160)
-MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-MainFrame.Visible = false
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 15)
-local Stroke = Instance.new("UIStroke", MainFrame)
-Stroke.Color = Color3.fromRGB(50, 50, 50)
-Stroke.Thickness = 2
+-- === MAIN FRAME ===
+local Main = Instance.new("Frame", GUI)
+Main.Size = UDim2.fromOffset(220, 250)
+Main.Position = UDim2.new(0.5,-110,0.5,-125)
+Main.BackgroundColor3 = Color3.fromRGB(20,20,25)
+Main.Visible = false
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0,16)
 
--- Заголовок
-local Title = Instance.new("TextLabel", MainFrame)
-Title.Size = UDim2.new(1, 0, 0, 40)
-Title.Text = "ULTIMATE HITBOX"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.Font = Enum.Font.GothamBold
-Title.BackgroundTransparency = 1
+-- Drag
+Main.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragUI = true
+		local start, pos = i.Position, Main.Position
+		i.Changed:Connect(function()
+			if i.UserInputState == Enum.UserInputState.End then dragUI = false end
+		end)
+		UIS.InputChanged:Connect(function(u)
+			if dragUI and u == i then
+				local d = u.Position - start
+				Main.Position = pos + UDim2.fromOffset(d.X, d.Y)
+			end
+		end)
+	end
+end)
 
--- Кнопка ВКЛ/ВЫКЛ
-local ToggleBtn = Instance.new("TextButton", MainFrame)
-ToggleBtn.Size = UDim2.new(0.9, 0, 0, 45)
-ToggleBtn.Position = UDim2.new(0.05, 0, 0.15, 0)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-ToggleBtn.Text = "OFF"
-ToggleBtn.TextColor3 = Color3.new(1,1,1)
-ToggleBtn.Font = Enum.Font.GothamBold
-Instance.new("UICorner", ToggleBtn)
+-- === TOGGLE ===
+local Toggle = Instance.new("TextButton", Main)
+Toggle.Size = UDim2.new(1,-30,0,50)
+Toggle.Position = UDim2.new(0,15,0,50)
+Toggle.Font = Enum.Font.GothamBold
+Toggle.TextSize = 18
+Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0,8)
 
--- Слайдеры (Функция создания)
-local function createSlider(name, pos, min, max, default, callback)
-    local label = Instance.new("TextLabel", MainFrame)
-    label.Size = UDim2.new(0.9, 0, 0, 20)
-    label.Position = pos
-    label.Text = name .. ": " .. default
-    label.TextColor3 = Color3.fromRGB(200, 200, 200)
-    label.BackgroundTransparency = 1
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Position = UDim2.new(0.05, 0, pos.Y.Scale, pos.Y.Offset)
-
-    local bg = Instance.new("TextButton", MainFrame)
-    bg.Size = UDim2.new(0.9, 0, 0, 15)
-    bg.Position = UDim2.new(0.05, 0, pos.Y.Scale, pos.Y.Offset + 25)
-    bg.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    bg.Text = ""
-    Instance.new("UICorner", bg)
-
-    local fill = Instance.new("Frame", bg)
-    fill.Size = UDim2.new((default-min)/(max-min), 0, 1, 0)
-    fill.BackgroundColor3 = Color3.fromRGB(0, 255, 255)
-    Instance.new("UICorner", fill)
-
-    local dragging = false
-    local function update(input)
-        local x = math.clamp((input.Position.X - bg.AbsolutePosition.X) / bg.AbsoluteSize.X, 0, 1)
-        fill.Size = UDim2.new(x, 0, 1, 0)
-        local val = math.floor(min + (x * (max - min)))
-        label.Text = name .. ": " .. val
-        callback(val)
-    end
-
-    bg.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            update(input)
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            update(input)
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
+local function refreshUI()
+	Toggle.Text = CFG.Enabled and "STATUS: ACTIVE" or "STATUS: DISABLED"
+	Toggle.BackgroundColor3 = CFG.Enabled and Color3.fromRGB(0,200,100) or Color3.fromRGB(60,60,70)
+	updateHitbox()
 end
 
--- Создаем слайдеры
-createSlider("SIZE", UDim2.new(0, 0, 0.35, 0), 2, Settings.MaxHitboxSize, Settings.HitboxSize, function(v) 
-    Settings.HitboxSize = v 
-    updateSphere()
+Toggle.MouseButton1Click:Connect(function()
+	CFG.Enabled = not CFG.Enabled
+	refreshUI()
 end)
 
-createSlider("POWER", UDim2.new(0, 0, 0.6, 0), 10, Settings.MaxPower, Settings.Power, function(v) 
-    Settings.Power = v 
+-- === SLIDER ===
+local Slider = Instance.new("TextButton", Main)
+Slider.Position = UDim2.new(0,15,0,130)
+Slider.Size = UDim2.new(1,-30,0,24)
+Slider.Text = ""
+Slider.BackgroundColor3 = Color3.fromRGB(50,50,60)
+Instance.new("UICorner", Slider).CornerRadius = UDim.new(1,0)
+
+local Fill = Instance.new("Frame", Slider)
+Fill.BackgroundColor3 = Color3.fromRGB(0,255,120)
+Instance.new("UICorner", Fill).CornerRadius = UDim.new(1,0)
+
+local function updateSlider(x)
+	local s = math.clamp((x - Slider.AbsolutePosition.X) / Slider.AbsoluteSize.X, 0, 1)
+	CFG.Size = math.max(2, math.floor(s * CFG.MaxSize))
+	Fill.Size = UDim2.new(s,0,1,0)
+	updateHitbox()
+end
+
+Slider.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.Touch then
+		dragSlider = true
+		updateSlider(i.Position.X)
+	end
 end)
 
--- Логика кнопок
-ToggleBtn.MouseButton1Click:Connect(function()
-    Settings.Enabled = not Settings.Enabled
-    ToggleBtn.Text = Settings.Enabled and "ON" or "OFF"
-    ToggleBtn.BackgroundColor3 = Settings.Enabled and Color3.fromRGB(0, 150, 100) or Color3.fromRGB(40, 40, 45)
-    updateSphere()
+UIS.InputChanged:Connect(function(i)
+	if dragSlider and i.UserInputType == Enum.UserInputType.Touch then
+		updateSlider(i.Position.X)
+	end
 end)
 
-OpenButton.MouseButton1Click:Connect(function()
-    MainFrame.Visible = not MainFrame.Visible
+UIS.InputEnded:Connect(function()
+	dragSlider = false
 end)
 
--- Dragging для MainFrame
-local dragStart, startPos, draggingMenu
-MainFrame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        draggingMenu = true
-        dragStart = input.Position
-        startPos = MainFrame.Position
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if draggingMenu and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    draggingMenu = false
+-- === OPEN / CLOSE ===
+Open.MouseButton1Click:Connect(function()
+	Open.Visible = false
+	Main.Visible = true
 end)
 
-print("✅ Advanced Impenetrable Hitbox Loaded!")
+local Close = Instance.new("TextButton", Main)
+Close.Text = "X"
+Close.Size = UDim2.fromOffset(30,30)
+Close.Position = UDim2.new(1,-35,0,5)
+Close.BackgroundTransparency = 1
+Close.TextColor3 = Color3.fromRGB(200,50,50)
+Close.MouseButton1Click:Connect(function()
+	Main.Visible = false
+	Open.Visible = true
+end)
+
+refreshUI()
+print("✅ Solid Hitbox Loaded")
