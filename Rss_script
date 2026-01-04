@@ -1,50 +1,49 @@
--- 🥅 СУПЕР ВРАТАРЬ v4.0 - МЯЧ НИКОГДА НЕ ПРОЙДЁТ
+-- 🥅 ПОЛНАЯ ЗАЩИТА ВРАТАРЯ - ОТСКОК ВЕЗДЕ
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local lp = Players.LocalPlayer
 
 local Settings = {
     Enabled = true,
-    Power = 80,
-    Size = 25, -- Радиус хитбокса
-    Predict = true -- Предсказание траектории
+    Size = 60,  -- ОГРОМНЫЙ хитбокс
+    Power = 150 -- МАКСИМАЛЬНАЯ сила
 }
 
-local sphere = Instance.new("Part")
-sphere.Name = "GoalkeeperShield"
-sphere.Shape = Enum.PartType.Ball
-sphere.Size = Vector3.new(Settings.Size, Settings.Size, Settings.Size)
-sphere.Material = Enum.Material.ForceField
-sphere.CanCollide = false
-sphere.Anchored = true
-sphere.Transparency = 0.4
-sphere.Color = Color3.fromRGB(0, 255, 150)
-sphere.Parent = workspace
+local shield = Instance.new("Part")
+shield.Name = "GateShield"
+shield.Shape = Enum.PartType.Ball
+shield.Size = Vector3.new(Settings.Size, Settings.Size, Settings.Size)
+shield.Material = Enum.Material.ForceField
+shield.CanCollide = false
+shield.Anchored = true
+shield.Transparency = 0.2
+shield.Color = Color3.fromRGB(255, 0, 0)
+shield.Parent = workspace
 
--- Мини кнопка
+-- КНОПКА
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Parent = game.CoreGui
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Parent = ScreenGui
-ToggleBtn.Size = UDim2.fromOffset(55, 55)
-ToggleBtn.Position = UDim2.new(0, 20, 0.5, -27)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 50, 100)
-ToggleBtn.TextColor3 = Color3.new(1,1,1)
-ToggleBtn.Text = "🥅"
-ToggleBtn.TextSize = 30
-ToggleBtn.Font = Enum.Font.GothamBold
-Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 15)
+local btn = Instance.new("TextButton")
+btn.Parent = ScreenGui
+btn.Size = UDim2.fromOffset(60, 60)
+btn.Position = UDim2.new(0, 10, 0.5, -30)
+btn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+btn.TextColor3 = Color3.new(1,1,1)
+btn.Text = "🛡️"
+btn.TextSize = 30
+btn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 15)
 
-local enabled = true
-ToggleBtn.MouseButton1Click:Connect(function()
-    enabled = not enabled
-    ToggleBtn.BackgroundColor3 = enabled and Color3.fromRGB(0, 150, 50) or Color3.fromRGB(100, 50, 0)
+local active = true
+btn.MouseButton1Click:Connect(function()
+    active = not active
+    btn.BackgroundColor3 = active and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(100, 100, 100)
 end)
 
--- ОСНОВНОЙ ЦИКЛ - ИДЕАЛЬНАЯ ЗАЩИТА
+-- ГЛАВНЫЙ ЦИКЛ - ОТСКОК ПО ВСЕЙ ПОВЕРХНОСТИ
 RunService.Heartbeat:Connect(function()
-    if not enabled then 
-        sphere.Transparency = 1 
+    if not active then 
+        shield.Transparency = 1
         return 
     end
     
@@ -52,42 +51,32 @@ RunService.Heartbeat:Connect(function()
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
     
-    -- ПОСТОЯННО ОТСЛЕЖИВАЕМ ВСЕ МЯЧИ
-    local balls = {}
+    -- ЩИТ ПЕРЕД ВРАТАРЁМ
+    shield.CFrame = root.CFrame * CFrame.new(0, 0, -Settings.Size/4)
+    shield.Size = Vector3.new(Settings.Size, Settings.Size, Settings.Size)
+    shield.Transparency = 0.2
+    
+    -- ПРОВЕРЯЕМ ВСЕ МЯЧИ
     for _, obj in pairs(workspace:GetChildren()) do
         if (obj.Name == "ball" or obj.Name == "TouchBall") and obj:IsA("BasePart") then
-            table.insert(balls, obj)
-        end
-    end
-    
-    -- ПОЗИЦИОНИРУЕМ ЩИТ ПЕРЕД ВРАТАРЁМ
-    sphere.CFrame = root.CFrame * CFrame.new(0, 0, -Settings.Size/3)
-    sphere.Size = Vector3.new(Settings.Size, Settings.Size, Settings.Size)
-    sphere.Transparency = 0.4
-    
-    -- ПРОВЕРЯЕМ КАЖДЫЙ МЯЧ
-    for _, ball in pairs(balls) do
-        if ball and ball.Parent then
-            local distance = (ball.Position - sphere.Position).Magnitude
-            local radius = Settings.Size / 2
+            local ball = obj
             
-            -- ЕСЛИ МЯЧ В ЗОНЕ ЩИТА ИЛИ ЛЕТИТ В НАС
-            if distance <= radius + 3 or 
-               (Settings.Predict and 
-                (ball.Position - sphere.Position).Magnitude < radius * 2 and 
-                ball.AssemblyLinearVelocity.Magnitude > 10) then
+            -- РАССТОЯНИЕ ДО МЯЧА
+            local dist = (ball.Position - shield.Position).Magnitude
+            local radius = Settings.Size / 2 + 8  -- БОЛЬШАЯ ЗОНА
+            
+            -- ЕСЛИ МЯЧ В ЗОНЕ ЩИТА (СВЕРХУ, СНИЗУ, СБОКУ, СПЕРЕДИ)
+            if dist <= radius then
+                -- ТОЧНЫЙ ВЕКТОР ОТСКОКА ОТ ПОВЕРХНОСТИ ШАРА
+                local surfaceNormal = (ball.Position - shield.Position).Unit
+                local ballSpeed = math.max(ball.AssemblyLinearVelocity.Magnitude, 50)
                 
-                -- ТОЧНЫЙ РАСчёт ОТСКОКА
-                local normal = (ball.Position - sphere.Position).Unit
-                local speed = ball.AssemblyLinearVelocity.Magnitude
-                local reflectSpeed = math.max(speed, 40) * 1.5
-                
-                -- ОТРАЖАЕМ МЯЧ ОТ КРАЯ ЩИТА
-                ball.AssemblyLinearVelocity = normal * reflectSpeed + Vector3.new(0, 15, 0)
-                ball.AssemblyAngularVelocity = Vector3.new(math.random(-50,50), math.random(-50,50), math.random(-50,50))
+                -- ОТСКОК ПО НАПРАВЛЕНИЮ НОРМАЛИ (работает ВЕЗДЕ)
+                ball.AssemblyLinearVelocity = surfaceNormal * Settings.Power + Vector3.new(0, 30, 0)
+                ball.AssemblyAngularVelocity = Vector3.new(math.random(-80,80), math.random(-80,80), math.random(-80,80))
             end
         end
     end
 end)
 
-print("🥅 СУПЕР ВРАТАРЬ АКТИВЕН! Мяч НЕ ПРОЙДЁТ!")
+print("Полная защита вратаря - отскок по всей поверхности!")
