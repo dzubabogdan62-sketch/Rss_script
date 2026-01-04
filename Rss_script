@@ -1,174 +1,277 @@
-
--- 🥅 РЕАЛЬНАЯ ЗАЩИТА ВРАТАРЯ - ФИЗИЧЕСКИЙ ЩИТ
+-- GOALKEEPER DEFENSE SYSTEM v2.0
+-- Advanced ball detection and deflection mechanism
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 local lp = Players.LocalPlayer
 
-local Settings = {
-    Size = 50,
-    Power = 180,
-    UpdateRate = 0.01 -- Очень частое обновление
+local Config = {
+    DetectionRadius = 40,
+    DeflectionForce = 220,
+    ReactionDelay = 0.06,
+    CatchRadius = 7,
+    Debug = false
 }
 
--- СОЗДАЁМ РЕАЛЬНЫЙ ФИЗИЧЕСКИЙ ЩИТ
-local shield = Instance.new("Part")
-shield.Name = "GateShield"
-shield.Shape = Enum.PartType.Ball
-shield.Size = Vector3.new(Settings.Size, Settings.Size, Settings.Size)
-shield.Material = Enum.Material.ForceField
-shield.CanCollide = true -- ВКЛЮЧАЕМ КОЛЛИЗИЮ!
-shield.Anchored = false -- ДЕЛАЕМ НЕПОДВИЖНЫМ ЧЕРЕЗ BODYPOSITION
-shield.Massless = true
-shield.Transparency = 0.3
-shield.Color = Color3.fromRGB(255, 0, 0)
-shield.CanTouch = true
-shield.Parent = workspace
+-- UI Setup
+local GUI = Instance.new("ScreenGui")
+GUI.Name = "GoalkeeperSystem"
+GUI.ResetOnSpawn = false
+GUI.Parent = game.CoreGui
 
--- ФИКСАЦИЯ ЩИТА НА МЕСТЕ
-local bodyPos = Instance.new("BodyPosition")
-bodyPos.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-bodyPos.P = 100000
-bodyPos.D = 5000
-bodyPos.Parent = shield
+local Toggle = Instance.new("TextButton")
+Toggle.Parent = GUI
+Toggle.Size = UDim2.fromOffset(60, 60)
+Toggle.Position = UDim2.new(0, 10, 0.5, -30)
+Toggle.BackgroundColor3 = Color3.fromRGB(40, 180, 40)
+Toggle.TextColor3 = Color3.new(1, 1, 1)
+Toggle.Text = "ON"
+Toggle.TextSize = 18
+Toggle.Font = Enum.Font.GothamBold
+Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 12)
 
-local bodyGyro = Instance.new("BodyGyro")
-bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-bodyGyro.P = 100000
-bodyGyro.D = 5000
-bodyGyro.Parent = shield
+local Status = Instance.new("TextLabel")
+Status.Parent = GUI
+Status.Size = UDim2.fromOffset(180, 40)
+Status.Position = UDim2.new(0, 10, 0, 10)
+Status.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Status.BackgroundTransparency = 0.2
+Status.TextColor3 = Color3.new(1, 1, 1)
+Status.Text = "ACTIVE"
+Status.TextSize = 16
+Status.Font = Enum.Font.GothamMedium
+Instance.new("UICorner", Status).CornerRadius = UDim.new(0, 8)
 
--- КНОПКА
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = game.CoreGui
-
-local btn = Instance.new("TextButton")
-btn.Parent = ScreenGui
-btn.Size = UDim2.fromOffset(60, 60)
-btn.Position = UDim2.new(0, 10, 0.5, -30)
-btn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-btn.TextColor3 = Color3.new(1,1,1)
-btn.Text = "🛡️"
-btn.TextSize = 30
-btn.Font = Enum.Font.GothamBold
-Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 15)
-
-local active = true
-btn.MouseButton1Click:Connect(function()
-    active = not active
-    btn.BackgroundColor3 = active and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(100, 100, 100)
-    shield.CanCollide = active
+local SystemActive = true
+Toggle.MouseButton1Click:Connect(function()
+    SystemActive = not SystemActive
+    Toggle.BackgroundColor3 = SystemActive and Color3.fromRGB(40, 180, 40) or Color3.fromRGB(180, 40, 40)
+    Toggle.Text = SystemActive and "ON" or "OFF"
+    Status.Text = SystemActive and "ACTIVE" or "DISABLED"
 end)
 
--- СЧЁТЧИК ОТСКОКОВ
-local lastBounce = {}
+-- Detection Zone Visualization
+local DetectionZone = Instance.new("Part")
+DetectionZone.Name = "DetectionZone"
+DetectionZone.Size = Vector3.new(1, 1, 1)
+DetectionZone.Transparency = 0.85
+DetectionZone.Color = Color3.fromRGB(40, 180, 40)
+DetectionZone.Material = Enum.Material.Neon
+DetectionZone.CanCollide = false
+DetectionZone.Anchored = true
+DetectionZone.Shape = Enum.PartType.Ball
+DetectionZone.Parent = Workspace
 
--- ОБРАБОТКА КАСАНИЯ
-shield.Touched:Connect(function(hit)
-    if not active then return end
-    
-    -- ПРОВЕРКА ЧТО ЭТО МЯЧ
-    if not (hit.Name == "ball" or hit.Name == "TouchBall" or hit.Name == "SoccerBall") then return end
-    if not hit:IsA("BasePart") then return end
-    
-    -- ЗАЩИТА ОТ СПАМА
-    local now = tick()
-    if lastBounce[hit] and (now - lastBounce[hit]) < 0.15 then return end
-    lastBounce[hit] = now
-    
-    -- ВИЗУАЛЬНАЯ ОБРАТНАЯ СВЯЗЬ
-    shield.Color = Color3.fromRGB(0, 255, 0)
-    task.delay(0.1, function()
-        if shield then shield.Color = Color3.fromRGB(255, 0, 0) end
-    end)
-    
-    -- ВЕКТОР ОТСКОКА
-    local shieldCenter = shield.Position
-    local ballPos = hit.Position
-    local direction = (ballPos - shieldCenter).Unit
-    
-    -- СИЛЬНЫЙ ОТСКОК
-    hit.AssemblyLinearVelocity = direction * Settings.Power + Vector3.new(0, 30, 0)
-    hit.AssemblyAngularVelocity = Vector3.new(
-        math.random(-70, 70),
-        math.random(-70, 70),
-        math.random(-70, 70)
-    )
-    
-    -- ТЕЛЕПОРТ МЯЧА НАРУЖУ (АНТИГЛИТЧ)
-    local dist = (ballPos - shieldCenter).Magnitude
-    if dist < Settings.Size/2 then
-        hit.CFrame = CFrame.new(shieldCenter + direction * (Settings.Size/2 + 3))
-    end
-    
-    print("⚽ Мяч отбит!")
-end)
+-- Ball Detection System
+local BallCache = {}
+local DeflectionCooldown = {}
 
--- ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА ЧЕРЕЗ RAYCAST
-local lastCheck = 0
-RunService.Heartbeat:Connect(function()
-    local char = lp.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+local function ScanForBalls()
+    local detectedBalls = {}
+    local locations = {
+        Workspace,
+        Workspace:FindFirstChild("Balls"),
+        Workspace:FindFirstChild("GameObjects"),
+        ReplicatedStorage,
+        ReplicatedStorage:FindFirstChild("Assets")
+    }
     
-    -- ПОЗИЦИЯ ЩИТА
-    local targetPos = root.CFrame * CFrame.new(0, 0, -Settings.Size/3)
-    bodyPos.Position = targetPos.Position
-    bodyGyro.CFrame = targetPos
-    
-    if not active then 
-        shield.Transparency = 1
-        shield.CanCollide = false
-        return 
-    end
-    
-    shield.Transparency = 0.3
-    shield.CanCollide = true
-    
-    -- ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА МЯЧЕЙ РЯДОМ
-    local now = tick()
-    if now - lastCheck < Settings.UpdateRate then return end
-    lastCheck = now
-    
-    for _, obj in pairs(workspace:GetChildren()) do
-        if (obj.Name == "ball" or obj.Name == "TouchBall" or obj.Name == "SoccerBall") and obj:IsA("BasePart") then
-            local dist = (obj.Position - shield.Position).Magnitude
-            
-            -- ЕСЛИ МЯЧ ОЧЕНЬ БЛИЗКО И НЕ ОТЛЕТЕЛ
-            if dist < (Settings.Size/2 + 5) then
-                local vel = obj.AssemblyLinearVelocity.Magnitude
-                
-                -- Проверка что мяч движется к щиту или застрял
-                local toShield = (shield.Position - obj.Position).Unit
-                local velDir = obj.AssemblyLinearVelocity.Unit
-                local movingToShield = velDir:Dot(toShield) > 0.3
-                
-                if vel < 20 or movingToShield then
-                    -- ПРИНУДИТЕЛЬНЫЙ ОТСКОК
-                    local direction = (obj.Position - shield.Position).Unit
-                    obj.AssemblyLinearVelocity = direction * Settings.Power + Vector3.new(0, 30, 0)
-                    obj.CFrame = CFrame.new(shield.Position + direction * (Settings.Size/2 + 5))
-                    
-                    shield.Color = Color3.fromRGB(0, 255, 0)
-                    task.delay(0.1, function()
-                        if shield then shield.Color = Color3.fromRGB(255, 0, 0) end
-                    end)
-                    
-                    print("⚡ Принудительный отскок!")
+    for _, location in ipairs(locations) do
+        if location then
+            for _, obj in pairs(location:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    local name = obj.Name:lower()
+                    if name:find("ball") or name:find("soccer") or name:find("football") or name:find("puck") then
+                        if obj.Parent and obj.Parent.Parent then
+                            table.insert(detectedBalls, obj)
+                        end
+                    end
                 end
             end
         end
     end
-end)
+    
+    return detectedBalls
+end
 
--- ОЧИСТКА
-game:GetService("Players").PlayerRemoving:Connect(function(player)
-    if player == lp then
-        shield:Destroy()
-        ScreenGui:Destroy()
+local function GetClosestBall(position)
+    local closest = nil
+    local minDistance = Config.DetectionRadius
+    
+    for _, ball in ipairs(BallCache) do
+        if ball and ball.Parent then
+            local distance = (ball.Position - position).Magnitude
+            if distance < minDistance then
+                minDistance = distance
+                closest = ball
+            end
+        end
+    end
+    
+    return closest, minDistance
+end
+
+local function CalculateDeflectionVector(ball, root)
+    local ballPosition = ball.Position
+    local rootPosition = root.Position
+    local ballVelocity = ball.AssemblyLinearVelocity
+    
+    -- Calculate optimal deflection angle
+    local toGoal = (rootPosition - ballPosition).Unit
+    local deflectionDirection = -toGoal
+    
+    -- Add upward component for clearance
+    deflectionDirection = (deflectionDirection + Vector3.new(0, 0.4, 0)).Unit
+    
+    -- Consider ball's current momentum
+    local currentSpeed = ballVelocity.Magnitude
+    local speedMultiplier = math.clamp(1 + (currentSpeed / 100), 1, 2)
+    
+    return deflectionDirection * Config.DeflectionForce * speedMultiplier
+end
+
+local function DeflectBall(ball, root)
+    local now = tick()
+    if DeflectionCooldown[ball] and (now - DeflectionCooldown[ball]) < 0.25 then
+        return false
+    end
+    DeflectionCooldown[ball] = now
+    
+    local deflectionVector = CalculateDeflectionVector(ball, root)
+    
+    -- Apply deflection force
+    ball.AssemblyLinearVelocity = deflectionVector
+    ball.AssemblyAngularVelocity = Vector3.new(
+        math.random(-80, 80),
+        math.random(-80, 80),
+        math.random(-80, 80)
+    )
+    
+    -- Visual feedback
+    DetectionZone.Color = Color3.fromRGB(255, 100, 100)
+    DetectionZone.Size = Vector3.new(Config.DetectionRadius * 2.2, Config.DetectionRadius * 2.2, Config.DetectionRadius * 2.2)
+    
+    task.delay(0.12, function()
+        if DetectionZone then
+            DetectionZone.Color = Color3.fromRGB(40, 180, 40)
+            DetectionZone.Size = Vector3.new(Config.DetectionRadius * 2, Config.DetectionRadius * 2, Config.DetectionRadius * 2)
+        end
+    end)
+    
+    Status.Text = "DEFLECTED"
+    task.delay(0.4, function()
+        if SystemActive then Status.Text = "ACTIVE" end
+    end)
+    
+    return true
+end
+
+local function CatchBall(ball, root)
+    if not ball or not ball.Parent then return false end
+    
+    local distance = (ball.Position - root.Position).Magnitude
+    
+    if distance < Config.CatchRadius then
+        -- Stop ball completely
+        ball.AssemblyLinearVelocity = Vector3.zero
+        ball.AssemblyAngularVelocity = Vector3.zero
+        
+        -- Position in front of goalkeeper
+        ball.CFrame = root.CFrame * CFrame.new(0, 0, -4)
+        
+        -- Visual feedback
+        DetectionZone.Color = Color3.fromRGB(255, 200, 50)
+        task.delay(0.3, function()
+            if DetectionZone then DetectionZone.Color = Color3.fromRGB(40, 180, 40) end
+        end)
+        
+        Status.Text = "CAUGHT"
+        task.delay(0.5, function()
+            if SystemActive then Status.Text = "ACTIVE" end
+        end)
+        
+        return true
+    end
+    
+    return false
+end
+
+local function IsBallApproaching(ball, root)
+    local ballVelocity = ball.AssemblyLinearVelocity
+    if ballVelocity.Magnitude < 5 then return false end
+    
+    local toRoot = (root.Position - ball.Position).Unit
+    local velocityDirection = ballVelocity.Unit
+    
+    return velocityDirection:Dot(toRoot) > 0.25
+end
+
+-- Update ball cache periodically
+task.spawn(function()
+    while task.wait(2) do
+        BallCache = ScanForBalls()
+        if Config.Debug then
+            print("[GOALKEEPER] Detected balls:", #BallCache)
+        end
     end
 end)
 
-print("✅ РЕАЛЬНАЯ физическая защита активирована!")
-print("✅ CanCollide включён - мяч будет физически отскакивать")
-print("✅ Двойная система: Touched + принудительная проверка")
+-- Main Loop
+local lastUpdate = 0
+RunService.Heartbeat:Connect(function()
+    local character = lp.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChild("Humanoid")
+    
+    if not root or not humanoid then return end
+    
+    -- Update detection zone
+    DetectionZone.CFrame = root.CFrame
+    DetectionZone.Size = Vector3.new(Config.DetectionRadius * 2, Config.DetectionRadius * 2, Config.DetectionRadius * 2)
+    
+    if not SystemActive then
+        DetectionZone.Transparency = 1
+        return
+    end
+    
+    DetectionZone.Transparency = 0.85
+    
+    -- Rate limiting
+    local now = tick()
+    if now - lastUpdate < Config.ReactionDelay then return end
+    lastUpdate = now
+    
+    -- Find closest ball
+    local ball, distance = GetClosestBall(root.Position)
+    
+    if ball then
+        -- Priority 1: Catch very close balls
+        if CatchBall(ball, root) then
+            return
+        end
+        
+        -- Priority 2: Deflect approaching balls
+        if IsBallApproaching(ball, root) and distance < Config.DetectionRadius then
+            DeflectBall(ball, root)
+        end
+    end
+end)
+
+-- Cleanup
+Players.PlayerRemoving:Connect(function(player)
+    if player == lp then
+        DetectionZone:Destroy()
+        GUI:Destroy()
+    end
+end)
+
+-- Initial scan
+BallCache = ScanForBalls()
+
+print("===========================================")
+print("GOALKEEPER DEFENSE SYSTEM INITIALIZED")
+print("Detection Radius:", Config.DetectionRadius)
+print("Deflection Force:", Config.DeflectionForce)
+print("Balls Detected:", #BallCache)
+print("===========================================")
