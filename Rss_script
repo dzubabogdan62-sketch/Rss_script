@@ -1,190 +1,303 @@
--- ================== SERVICES ==================
+-- ⚽ IMPROVED HITBOX SYSTEM v2.0
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
+local UserInputService = game:GetService("UserInputService")
 local lp = Players.LocalPlayer
 
--- ================== SETTINGS ==================
-local CFG = {
-	Enabled = false,
-	Power = 85,
-	Cooldown = 0.25,
-	Size = 12,
-	MaxSize = 35,
-	Offset = CFrame.new(0, 0, -3)
+-- ========= SETTINGS =========
+local Settings = {
+    Enabled = false,
+    Power = 80,
+    Cooldown = 0.25,
+    HitboxSize = 12,
+    MaxHitboxSize = 35,
+    InvulnerableMode = true -- Новое: непробиваемый режим
 }
 
 local lastKick = 0
-local dragUI, dragSlider = false, false
 
--- ================== BALL ==================
+-- ========= HITBOX CREATION =========
+local function createHitbox()
+    local sphere = Instance.new("Part")
+    sphere.Shape = Enum.PartType.Ball
+    sphere.Anchored = true
+    sphere.CanCollide = false
+    sphere.Material = Enum.Material.ForceField
+    sphere.Color = Color3.fromRGB(0, 255, 120)
+    sphere.Transparency = 1
+    
+    if Settings.InvulnerableMode then
+        -- Создаем внешний щит
+        local outer = Instance.new("Part", sphere)
+        outer.Shape = Enum.PartType.Ball
+        outer.Size = Vector3.new(Settings.HitboxSize + 2, Settings.HitboxSize + 2, Settings.HitboxSize + 2)
+        outer.CanCollide = false
+        outer.Transparency = 0.7
+        outer.Material = Enum.Material.Glass
+        outer.Color = Color3.fromRGB(100, 150, 255)
+        outer.TopSurface = Enum.SurfaceType.Smooth
+        outer.BottomSurface = Enum.SurfaceType.Smooth
+        outer.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0)
+        outer.CanQuery = false
+    end
+    
+    sphere.Parent = workspace
+    return sphere
+end
+
+local sphere = createHitbox()
+
+-- ========= BALL DETECTION =========
 local function getBall()
-	return workspace:FindFirstChild("ball") or workspace:FindFirstChild("TouchBall")
+    return workspace:FindFirstChild("ball") or workspace:FindFirstChild("TouchBall")
 end
 
--- ================== HITBOX ==================
-local Hitbox = Instance.new("Part")
-Hitbox.Name = "SolidHitbox"
-Hitbox.Shape = Enum.PartType.Ball
-Hitbox.Anchored = true
-Hitbox.CanCollide = true -- 🔒 НЕПРОБИВАЕМЫЙ
-Hitbox.Material = Enum.Material.ForceField
-Hitbox.Color = Color3.fromRGB(0, 255, 120)
-Hitbox.Transparency = 1
-Hitbox.Parent = workspace
-
-local function updateHitbox()
-	Hitbox.Size = Vector3.one * CFG.Size
-	Hitbox.Transparency = CFG.Enabled and 0.45 or 1
-end
-
-updateHitbox()
-
--- ================== CORE LOGIC ==================
+-- ========= MAIN LOOP =========
 RunService.Heartbeat:Connect(function()
-	if not CFG.Enabled then return end
+    if not Settings.Enabled then
+        sphere.Transparency = 1
+        return
+    end
 
-	local char = lp.Character
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	if not root then return end
+    local char = lp.Character  
+    local root = char and char:FindFirstChild("HumanoidRootPart")  
+    if not root then return end  
 
-	Hitbox.CFrame = root.CFrame * CFG.Offset
+    local newSize = Vector3.new(Settings.HitboxSize, Settings.HitboxSize, Settings.HitboxSize)
+    sphere.Size = newSize
+    sphere.CFrame = root.CFrame * CFrame.new(0, 0, -3)  
+    sphere.Transparency = 0.5  
 
-	local ball = getBall()
-	if not (ball and ball:IsA("BasePart")) then return end
-	if tick() - lastKick < CFG.Cooldown then return end
+    -- Обновляем внешний щит
+    if sphere:FindFirstChild("Part") then
+        local outer = sphere:FindFirstChild("Part")
+        outer.Size = newSize + Vector3.new(2, 2, 2)
+    end
 
-	local dist = (ball.Position - Hitbox.Position).Magnitude
-	if dist <= (CFG.Size / 2) then
-		lastKick = tick()
+    local ball = getBall()  
+    if not ball or not ball:IsA("BasePart") then return end  
+    if tick() - lastKick < Settings.Cooldown then return end  
 
-		-- 🔥 УМНЫЙ УДАР
-		local moveBoost = root.AssemblyLinearVelocity.Magnitude * 0.25
-		local dir = (ball.Position - root.Position + Vector3.new(0, 1.2, 0)).Unit
-
-		ball.AssemblyLinearVelocity =
-			dir * (CFG.Power + moveBoost) + Vector3.new(0, 18, 0)
-
-		-- ⚙️ Стабилизация
-		ball.AssemblyAngularVelocity *= 0.4
-	end
+    if (ball.Position - sphere.Position).Magnitude <= (Settings.HitboxSize / 2) + 2 then  
+        lastKick = tick()  
+        local dir = (ball.Position - root.Position + Vector3.new(0, 1, 0)).Unit  
+        ball.AssemblyLinearVelocity = dir * Settings.Power + Vector3.new(0, 18, 0)  
+    end
 end)
 
--- ================== UI ==================
-if game.CoreGui:FindFirstChild("HitboxMobileUI") then
-	game.CoreGui.HitboxMobileUI:Destroy()
+-- ========= UI SYSTEM =========
+if game.CoreGui:FindFirstChild("HitboxUI") then
+    game.CoreGui.HitboxUI:Destroy()
 end
 
-local GUI = Instance.new("ScreenGui", game.CoreGui)
-GUI.Name = "HitboxMobileUI"
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "HitboxUI"
+ScreenGui.Parent = game.CoreGui
 
--- === OPEN BUTTON ===
-local Open = Instance.new("TextButton", GUI)
-Open.Size = UDim2.fromOffset(50, 50)
-Open.Position = UDim2.new(0, 20, 0.4, 0)
-Open.Text = "⚽"
-Open.Font = Enum.Font.GothamBold
-Open.TextSize = 24
-Open.BackgroundColor3 = Color3.fromRGB(30,30,35)
-Open.TextColor3 = Color3.fromRGB(0,255,120)
-Instance.new("UICorner", Open).CornerRadius = UDim.new(0,12)
+-- Mini Button
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Parent = ScreenGui
+OpenBtn.Size = UDim2.fromOffset(50, 50)
+OpenBtn.Position = UDim2.new(0, 20, 0.4, 0)
+OpenBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+OpenBtn.TextColor3 = Color3.fromRGB(0, 255, 120)
+OpenBtn.Text = "⚽"
+OpenBtn.TextSize = 24
+OpenBtn.Font = Enum.Font.GothamBold
+OpenBtn.BorderSizePixel = 0
+Instance.new("UICorner", OpenBtn).CornerRadius = UDim.new(0, 12)
+Instance.new("UIStroke", OpenBtn).Color = Color3.fromRGB(60, 60, 60)
 
--- === MAIN FRAME ===
-local Main = Instance.new("Frame", GUI)
-Main.Size = UDim2.fromOffset(220, 250)
-Main.Position = UDim2.new(0.5,-110,0.5,-125)
-Main.BackgroundColor3 = Color3.fromRGB(20,20,25)
-Main.Visible = false
-Instance.new("UICorner", Main).CornerRadius = UDim.new(0,16)
+-- Main Panel
+local MainFrame = Instance.new("Frame")
+MainFrame.Parent = ScreenGui
+MainFrame.Size = UDim2.fromOffset(220, 320)
+MainFrame.Position = UDim2.new(0.5, -110, 0.5, -160)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Visible = false
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 16)
 
--- Drag
-Main.InputBegan:Connect(function(i)
-	if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
-		dragUI = true
-		local start, pos = i.Position, Main.Position
-		i.Changed:Connect(function()
-			if i.UserInputState == Enum.UserInputState.End then dragUI = false end
-		end)
-		UIS.InputChanged:Connect(function(u)
-			if dragUI and u == i then
-				local d = u.Position - start
-				Main.Position = pos + UDim2.fromOffset(d.X, d.Y)
-			end
-		end)
-	end
+-- Dragging Logic
+local dragging, dragStart, startPos
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+    end
 end)
 
--- === TOGGLE ===
-local Toggle = Instance.new("TextButton", Main)
-Toggle.Size = UDim2.new(1,-30,0,50)
-Toggle.Position = UDim2.new(0,15,0,50)
-Toggle.Font = Enum.Font.GothamBold
-Toggle.TextSize = 18
-Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0,8)
+MainFrame.InputEnded:Connect(function() dragging = false end)
 
-local function refreshUI()
-	Toggle.Text = CFG.Enabled and "STATUS: ACTIVE" or "STATUS: DISABLED"
-	Toggle.BackgroundColor3 = CFG.Enabled and Color3.fromRGB(0,200,100) or Color3.fromRGB(60,60,70)
-	updateHitbox()
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and dragStart then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Title
+local Title = Instance.new("TextLabel", MainFrame)
+Title.Size = UDim2.new(1, -40, 0, 40)
+Title.Position = UDim2.new(0, 15, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "⚽ HITBOX v2"
+Title.Font = Enum.Font.GothamBlack
+Title.TextColor3 = Color3.fromRGB(0, 255, 120)
+Title.TextSize = 16
+
+-- Close Button
+local CloseBtn = Instance.new("TextButton", MainFrame)
+CloseBtn.Size = UDim2.fromOffset(30, 30)
+CloseBtn.Position = UDim2.new(1, -35, 0, 5)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.fromRGB(200, 50, 50)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 18
+CloseBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false OpenBtn.Visible = true end)
+OpenBtn.MouseButton1Click:Connect(function() MainFrame.Visible = true OpenBtn.Visible = false end)
+
+-- Toggle Button
+local ToggleBtn = Instance.new("TextButton", MainFrame)
+ToggleBtn.Size = UDim2.new(1, -30, 0, 50)
+ToggleBtn.Position = UDim2.new(0, 15, 0, 50)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.TextSize = 16
+ToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 8)
+
+local function updateUI()
+    if Settings.Enabled then
+        ToggleBtn.Text = "✓ ACTIVE"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+    else
+        ToggleBtn.Text = "✗ DISABLED"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    end
 end
 
-Toggle.MouseButton1Click:Connect(function()
-	CFG.Enabled = not CFG.Enabled
-	refreshUI()
+ToggleBtn.MouseButton1Click:Connect(function()
+    Settings.Enabled = not Settings.Enabled
+    updateUI()
 end)
 
--- === SLIDER ===
-local Slider = Instance.new("TextButton", Main)
-Slider.Position = UDim2.new(0,15,0,130)
-Slider.Size = UDim2.new(1,-30,0,24)
-Slider.Text = ""
-Slider.BackgroundColor3 = Color3.fromRGB(50,50,60)
-Instance.new("UICorner", Slider).CornerRadius = UDim.new(1,0)
+-- Size Label
+local SizeLabel = Instance.new("TextLabel", MainFrame)
+SizeLabel.Position = UDim2.new(0, 15, 0, 115)
+SizeLabel.Size = UDim2.new(1, -30, 0, 20)
+SizeLabel.BackgroundTransparency = 1
+SizeLabel.Text = "HITBOX SIZE: " .. Settings.HitboxSize
+SizeLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+SizeLabel.Font = Enum.Font.Gotham
+SizeLabel.TextSize = 12
+SizeLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-local Fill = Instance.new("Frame", Slider)
-Fill.BackgroundColor3 = Color3.fromRGB(0,255,120)
-Instance.new("UICorner", Fill).CornerRadius = UDim.new(1,0)
+-- Slider
+local SliderBg = Instance.new("TextButton", MainFrame)
+SliderBg.Name = "Slider"
+SliderBg.Text = ""
+SliderBg.AutoButtonColor = false
+SliderBg.Position = UDim2.new(0, 15, 0, 145)
+SliderBg.Size = UDim2.new(1, -30, 0, 20)
+SliderBg.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+Instance.new("UICorner", SliderBg).CornerRadius = UDim.new(1, 0)
 
-local function updateSlider(x)
-	local s = math.clamp((x - Slider.AbsolutePosition.X) / Slider.AbsoluteSize.X, 0, 1)
-	CFG.Size = math.max(2, math.floor(s * CFG.MaxSize))
-	Fill.Size = UDim2.new(s,0,1,0)
-	updateHitbox()
+local SliderFill = Instance.new("Frame", SliderBg)
+SliderFill.Size = UDim2.new(Settings.HitboxSize / Settings.MaxHitboxSize, 0, 1, 0)
+SliderFill.BackgroundColor3 = Color3.fromRGB(0, 255, 120)
+Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(1, 0)
+
+local function updateSlider(input)
+    local relativeX = math.clamp(input.Position.X - SliderBg.AbsolutePosition.X, 0, SliderBg.AbsoluteSize.X)
+    local scale = relativeX / SliderBg.AbsoluteSize.X
+    Settings.HitboxSize = math.max(2, math.floor(scale * Settings.MaxHitboxSize))
+    SliderFill.Size = UDim2.new(scale, 0, 1, 0)
+    SizeLabel.Text = "HITBOX SIZE: " .. Settings.HitboxSize
 end
 
-Slider.InputBegan:Connect(function(i)
-	if i.UserInputType == Enum.UserInputType.Touch then
-		dragSlider = true
-		updateSlider(i.Position.X)
-	end
+local draggingSlider = false
+SliderBg.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingSlider = true
+        updateSlider(input)
+    end
 end)
 
-UIS.InputChanged:Connect(function(i)
-	if dragSlider and i.UserInputType == Enum.UserInputType.Touch then
-		updateSlider(i.Position.X)
-	end
+SliderBg.InputEnded:Connect(function() draggingSlider = false end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateSlider(input)
+    end
 end)
 
-UIS.InputEnded:Connect(function()
-	dragSlider = false
+-- Invulnerable Toggle
+local InvulnBtn = Instance.new("TextButton", MainFrame)
+InvulnBtn.Size = UDim2.new(1, -30, 0, 40)
+InvulnBtn.Position = UDim2.new(0, 15, 0, 180)
+InvulnBtn.Font = Enum.Font.GothamBold
+InvulnBtn.TextSize = 14
+InvulnBtn.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", InvulnBtn).CornerRadius = UDim.new(0, 8)
+InvulnBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 200)
+InvulnBtn.Text = "🛡️ SHIELD: ON"
+
+InvulnBtn.MouseButton1Click:Connect(function()
+    Settings.InvulnerableMode = not Settings.InvulnerableMode
+    InvulnBtn.Text = Settings.InvulnerableMode and "🛡️ SHIELD: ON" or "🛡️ SHIELD: OFF"
+    InvulnBtn.BackgroundColor3 = Settings.InvulnerableMode and Color3.fromRGB(0, 150, 200) or Color3.fromRGB(100, 100, 100)
 end)
 
--- === OPEN / CLOSE ===
-Open.MouseButton1Click:Connect(function()
-	Open.Visible = false
-	Main.Visible = true
+-- Power Label & Slider
+local PowerLabel = Instance.new("TextLabel", MainFrame)
+PowerLabel.Position = UDim2.new(0, 15, 0, 235)
+PowerLabel.Size = UDim2.new(1, -30, 0, 20)
+PowerLabel.BackgroundTransparency = 1
+PowerLabel.Text = "POWER: " .. Settings.Power
+PowerLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+PowerLabel.Font = Enum.Font.Gotham
+PowerLabel.TextSize = 12
+PowerLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local PowerSlider = Instance.new("TextButton", MainFrame)
+PowerSlider.Name = "PowerSlider"
+PowerSlider.Text = ""
+PowerSlider.AutoButtonColor = false
+PowerSlider.Position = UDim2.new(0, 15, 0, 265)
+PowerSlider.Size = UDim2.new(1, -30, 0, 20)
+PowerSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+Instance.new("UICorner", PowerSlider).CornerRadius = UDim.new(1, 0)
+
+local PowerFill = Instance.new("Frame", PowerSlider)
+PowerFill.Size = UDim2.new(Settings.Power / 200, 0, 1, 0)
+PowerFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+Instance.new("UICorner", PowerFill).CornerRadius = UDim.new(1, 0)
+
+local draggingPower = false
+local function updatePower(input)
+    local relativeX = math.clamp(input.Position.X - PowerSlider.AbsolutePosition.X, 0, PowerSlider.AbsoluteSize.X)
+    local scale = relativeX / PowerSlider.AbsoluteSize.X
+    Settings.Power = math.floor(scale * 200)
+    PowerFill.Size = UDim2.new(scale, 0, 1, 0)
+    PowerLabel.Text = "POWER: " .. Settings.Power
+end
+
+PowerSlider.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingPower = true
+        updatePower(input)
+    end
 end)
 
-local Close = Instance.new("TextButton", Main)
-Close.Text = "X"
-Close.Size = UDim2.fromOffset(30,30)
-Close.Position = UDim2.new(1,-35,0,5)
-Close.BackgroundTransparency = 1
-Close.TextColor3 = Color3.fromRGB(200,50,50)
-Close.MouseButton1Click:Connect(function()
-	Main.Visible = false
-	Open.Visible = true
+PowerSlider.InputEnded:Connect(function() draggingPower = false end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingPower and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updatePower(input)
+    end
 end)
 
-refreshUI()
-print("✅ Solid Hitbox Loaded")
+updateUI()
+print("✅ Advanced Hitbox System Loaded!")
