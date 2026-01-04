@@ -1,5 +1,5 @@
--- GOALKEEPER DEFENSE SYSTEM v2.0
--- Advanced ball detection and deflection mechanism
+-- GOALKEEPER DEFENSE SYSTEM v2.1
+-- Advanced ball detection with player stability
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,7 +11,8 @@ local Config = {
     DeflectionForce = 220,
     ReactionDelay = 0.06,
     CatchRadius = 7,
-    Debug = false
+    PlayerStability = true, -- ЗАЩИТА ОТ ОТЛЁТА
+    Debug = true -- ВКЛЮЧЁН DEBUG MODE
 }
 
 -- UI Setup
@@ -43,6 +44,37 @@ Status.TextSize = 16
 Status.Font = Enum.Font.GothamMedium
 Instance.new("UICorner", Status).CornerRadius = UDim.new(0, 8)
 
+-- DEBUG PANEL
+local DebugPanel = Instance.new("Frame")
+DebugPanel.Parent = GUI
+DebugPanel.Size = UDim2.fromOffset(250, 200)
+DebugPanel.Position = UDim2.new(1, -260, 0, 10)
+DebugPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+DebugPanel.BackgroundTransparency = 0.3
+Instance.new("UICorner", DebugPanel).CornerRadius = UDim.new(0, 8)
+
+local DebugTitle = Instance.new("TextLabel")
+DebugTitle.Parent = DebugPanel
+DebugTitle.Size = UDim2.new(1, 0, 0, 25)
+DebugTitle.BackgroundTransparency = 1
+DebugTitle.Text = "DEBUG INFO"
+DebugTitle.TextColor3 = Color3.fromRGB(255, 200, 0)
+DebugTitle.TextSize = 14
+DebugTitle.Font = Enum.Font.GothamBold
+
+local DebugText = Instance.new("TextLabel")
+DebugText.Parent = DebugPanel
+DebugText.Size = UDim2.new(1, -10, 1, -30)
+DebugText.Position = UDim2.new(0, 5, 0, 25)
+DebugText.BackgroundTransparency = 1
+DebugText.Text = "Scanning..."
+DebugText.TextColor3 = Color3.new(1, 1, 1)
+DebugText.TextSize = 12
+DebugText.Font = Enum.Font.Code
+DebugText.TextXAlignment = Enum.TextXAlignment.Left
+DebugText.TextYAlignment = Enum.TextYAlignment.Top
+DebugText.TextWrapped = true
+
 local SystemActive = true
 Toggle.MouseButton1Click:Connect(function()
     SystemActive = not SystemActive
@@ -66,25 +98,41 @@ DetectionZone.Parent = Workspace
 -- Ball Detection System
 local BallCache = {}
 local DeflectionCooldown = {}
+local DebugInfo = {
+    BallsFound = 0,
+    LastScan = 0,
+    ActiveBall = "None",
+    LastAction = "None"
+}
 
 local function ScanForBalls()
     local detectedBalls = {}
-    local locations = {
-        Workspace,
-        Workspace:FindFirstChild("Balls"),
-        Workspace:FindFirstChild("GameObjects"),
-        ReplicatedStorage,
-        ReplicatedStorage:FindFirstChild("Assets")
+    local scanLocations = {
+        {name = "Workspace", obj = Workspace},
+        {name = "Workspace.Balls", obj = Workspace:FindFirstChild("Balls")},
+        {name = "Workspace.GameObjects", obj = Workspace:FindFirstChild("GameObjects")},
+        {name = "ReplicatedStorage", obj = ReplicatedStorage},
+        {name = "ReplicatedStorage.Assets", obj = ReplicatedStorage:FindFirstChild("Assets")},
+        {name = "Workspace.Game", obj = Workspace:FindFirstChild("Game")},
+        {name = "Workspace.Live", obj = Workspace:FindFirstChild("Live")}
     }
     
-    for _, location in ipairs(locations) do
-        if location then
-            for _, obj in pairs(location:GetDescendants()) do
+    for _, location in ipairs(scanLocations) do
+        if location.obj then
+            for _, obj in pairs(location.obj:GetDescendants()) do
                 if obj:IsA("BasePart") then
                     local name = obj.Name:lower()
                     if name:find("ball") or name:find("soccer") or name:find("football") or name:find("puck") then
                         if obj.Parent and obj.Parent.Parent then
-                            table.insert(detectedBalls, obj)
+                            table.insert(detectedBalls, {
+                                object = obj,
+                                location = location.name,
+                                name = obj.Name
+                            })
+                            
+                            if Config.Debug then
+                                print(string.format("[SCAN] Found: %s in %s", obj.Name, location.name))
+                            end
                         end
                     end
                 end
@@ -92,21 +140,48 @@ local function ScanForBalls()
         end
     end
     
+    DebugInfo.BallsFound = #detectedBalls
+    DebugInfo.LastScan = tick()
+    
     return detectedBalls
+end
+
+local function UpdateDebugPanel()
+    if not Config.Debug then
+        DebugPanel.Visible = false
+        return
+    end
+    
+    DebugPanel.Visible = true
+    local text = string.format(
+        "Balls Found: %d\nLast Scan: %.1fs ago\nActive Ball: %s\nLast Action: %s\nSystem: %s",
+        DebugInfo.BallsFound,
+        tick() - DebugInfo.LastScan,
+        DebugInfo.ActiveBall,
+        DebugInfo.LastAction,
+        SystemActive and "ON" or "OFF"
+    )
+    DebugText.Text = text
 end
 
 local function GetClosestBall(position)
     local closest = nil
     local minDistance = Config.DetectionRadius
     
-    for _, ball in ipairs(BallCache) do
+    for _, ballData in ipairs(BallCache) do
+        local ball = ballData.object
         if ball and ball.Parent then
             local distance = (ball.Position - position).Magnitude
             if distance < minDistance then
                 minDistance = distance
                 closest = ball
+                DebugInfo.ActiveBall = string.format("%s (%.1fm)", ball.Name, distance)
             end
         end
+    end
+    
+    if not closest then
+        DebugInfo.ActiveBall = "None"
     end
     
     return closest, minDistance
@@ -117,18 +192,48 @@ local function CalculateDeflectionVector(ball, root)
     local rootPosition = root.Position
     local ballVelocity = ball.AssemblyLinearVelocity
     
-    -- Calculate optimal deflection angle
-    local toGoal = (rootPosition - ballPosition).Unit
-    local deflectionDirection = -toGoal
+    -- НАПРАВЛЕНИЕ ОТ ВОРОТ (НЕ К ИГРОКУ)
+    local awayFromGoal = (ballPosition - rootPosition).Unit
     
-    -- Add upward component for clearance
-    deflectionDirection = (deflectionDirection + Vector3.new(0, 0.4, 0)).Unit
+    -- Добавляем подъём
+    local deflectionDirection = (awayFromGoal + Vector3.new(0, 0.4, 0)).Unit
     
-    -- Consider ball's current momentum
+    -- Учёт скорости мяча
     local currentSpeed = ballVelocity.Magnitude
     local speedMultiplier = math.clamp(1 + (currentSpeed / 100), 1, 2)
     
     return deflectionDirection * Config.DeflectionForce * speedMultiplier
+end
+
+local function StabilizePlayer(root, humanoid)
+    if not Config.PlayerStability then return end
+    
+    -- КРИТИЧНО: Защита от отлёта игрока
+    
+    -- 1. Отключаем PlatformStand
+    if humanoid.PlatformStand then
+        humanoid.PlatformStand = false
+    end
+    
+    -- 2. Ограничиваем вертикальную скорость
+    local velocity = root.AssemblyLinearVelocity
+    if math.abs(velocity.Y) > 60 then
+        root.AssemblyLinearVelocity = Vector3.new(
+            velocity.X,
+            math.clamp(velocity.Y, -60, 60),
+            velocity.Z
+        )
+    end
+    
+    -- 3. Убираем горизонтальный отброс от мяча
+    if velocity.Magnitude > 80 then
+        root.AssemblyLinearVelocity = velocity * 0.3
+    end
+    
+    -- 4. Сброс вращения
+    if root.AssemblyAngularVelocity.Magnitude > 10 then
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
 end
 
 local function DeflectBall(ball, root)
@@ -138,15 +243,30 @@ local function DeflectBall(ball, root)
     end
     DeflectionCooldown[ball] = now
     
+    -- ВАЖНО: Сначала стабилизируем игрока
+    local humanoid = root.Parent:FindFirstChild("Humanoid")
+    if humanoid then
+        StabilizePlayer(root, humanoid)
+    end
+    
     local deflectionVector = CalculateDeflectionVector(ball, root)
     
-    -- Apply deflection force
+    -- Применяем силу ТОЛЬКО к мячу
     ball.AssemblyLinearVelocity = deflectionVector
     ball.AssemblyAngularVelocity = Vector3.new(
         math.random(-80, 80),
         math.random(-80, 80),
         math.random(-80, 80)
     )
+    
+    -- АНТИГЛИТЧ: Телепортируем мяч от игрока
+    local safeDistance = Config.CatchRadius + 3
+    local direction = (ball.Position - root.Position).Unit
+    local dist = (ball.Position - root.Position).Magnitude
+    
+    if dist < safeDistance then
+        ball.CFrame = CFrame.new(root.Position + direction * safeDistance)
+    end
     
     -- Visual feedback
     DetectionZone.Color = Color3.fromRGB(255, 100, 100)
@@ -160,9 +280,15 @@ local function DeflectBall(ball, root)
     end)
     
     Status.Text = "DEFLECTED"
+    DebugInfo.LastAction = string.format("DEFLECT (Force: %.0f)", Config.DeflectionForce)
+    
     task.delay(0.4, function()
         if SystemActive then Status.Text = "ACTIVE" end
     end)
+    
+    if Config.Debug then
+        print(string.format("[DEFLECT] Ball: %s | Force: %.0f", ball.Name, deflectionVector.Magnitude))
+    end
     
     return true
 end
@@ -173,23 +299,34 @@ local function CatchBall(ball, root)
     local distance = (ball.Position - root.Position).Magnitude
     
     if distance < Config.CatchRadius then
-        -- Stop ball completely
+        -- ВАЖНО: Стабилизируем игрока перед ловлей
+        local humanoid = root.Parent:FindFirstChild("Humanoid")
+        if humanoid then
+            StabilizePlayer(root, humanoid)
+        end
+        
+        -- Останавливаем мяч
         ball.AssemblyLinearVelocity = Vector3.zero
         ball.AssemblyAngularVelocity = Vector3.zero
         
-        -- Position in front of goalkeeper
+        -- Позиционируем перед вратарём
         ball.CFrame = root.CFrame * CFrame.new(0, 0, -4)
         
-        -- Visual feedback
         DetectionZone.Color = Color3.fromRGB(255, 200, 50)
         task.delay(0.3, function()
             if DetectionZone then DetectionZone.Color = Color3.fromRGB(40, 180, 40) end
         end)
         
         Status.Text = "CAUGHT"
+        DebugInfo.LastAction = "CATCH"
+        
         task.delay(0.5, function()
             if SystemActive then Status.Text = "ACTIVE" end
         end)
+        
+        if Config.Debug then
+            print(string.format("[CATCH] Ball: %s", ball.Name))
+        end
         
         return true
     end
@@ -212,7 +349,7 @@ task.spawn(function()
     while task.wait(2) do
         BallCache = ScanForBalls()
         if Config.Debug then
-            print("[GOALKEEPER] Detected balls:", #BallCache)
+            print(string.format("[SYSTEM] Scan complete. Balls found: %d", #BallCache))
         end
     end
 end)
@@ -226,9 +363,15 @@ RunService.Heartbeat:Connect(function()
     
     if not root or not humanoid then return end
     
+    -- ПОСТОЯННАЯ СТАБИЛИЗАЦИЯ ИГРОКА
+    StabilizePlayer(root, humanoid)
+    
     -- Update detection zone
     DetectionZone.CFrame = root.CFrame
     DetectionZone.Size = Vector3.new(Config.DetectionRadius * 2, Config.DetectionRadius * 2, Config.DetectionRadius * 2)
+    
+    -- Update debug panel
+    UpdateDebugPanel()
     
     if not SystemActive then
         DetectionZone.Transparency = 1
@@ -270,8 +413,10 @@ end)
 BallCache = ScanForBalls()
 
 print("===========================================")
-print("GOALKEEPER DEFENSE SYSTEM INITIALIZED")
+print("GOALKEEPER DEFENSE SYSTEM v2.1 INITIALIZED")
 print("Detection Radius:", Config.DetectionRadius)
 print("Deflection Force:", Config.DeflectionForce)
+print("Player Stability: ENABLED")
+print("Debug Mode: ENABLED")
 print("Balls Detected:", #BallCache)
 print("===========================================")
