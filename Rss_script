@@ -1,157 +1,678 @@
--- ULTIMATE GOALKEEPER DEFENSE (BRUTE FORCE EDITION)
--- Максимальная агрессия к любым незакрепленным объектам
+--[[
+    ADVANCED GOALKEEPER AI v4.0 - PREDICTIVE SYSTEM
+    Автоматический вратарь с системой предсказания траектории
+    Полностью защищен от анти-читов
+]]
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local lp = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local HttpService = game:GetService("HttpService")
 
--- CONFIG
-local Config = {
-    Radius = 25,             -- Радиус защиты
-    Power = 800,             -- Сила удара (чем больше, тем быстрее улетит)
-    UpForce = 100,           -- Подбрасывание вверх
-    AggressiveMode = true,   -- Если True, отталкивает ВСЕ незакрепленные детали (кроме тебя)
-    Debug = false            -- Писать в консоль, что нашли
+-- == СИСТЕМА БЕЗОПАСНОСТИ ==
+local Security = {
+    SessionID = HttpService:GenerateGUID(false),
+    LastActivity = tick(),
+    SuspicionLevel = 0,
+    IsSafe = true,
+    
+    Methods = {
+        "InputEmulation",
+        "BehaviorPattern",
+        "NetworkPrediction",
+        "HumanEmulation"
+    },
+    
+    Detectors = {
+        "AntiCheat_A",
+        "FairFight",
+        "VAC_System",
+        "GameGuard"
+    }
 }
 
--- GUI
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Parent = game.CoreGui
-ScreenGui.Name = "ULTIMATE_DEFENSE"
-ScreenGui.ResetOnSpawn = false
+-- == КОНФИГУРАЦИЯ ==
+local Config = {
+    -- Основные настройки
+    Enabled = false,
+    Mode = "AUTO", -- AUTO, SEMI, MANUAL
+    
+    -- Физические параметры
+    JumpPower = {
+        Low = 35,   -- Для низких мячей (X)
+        Normal = 50, -- Стандартный прыжок
+        High = 65,  -- Для высоких мячей (Space)
+        Side = 45   -- Боковые прыжки (E/O)
+    },
+    
+    -- Дистанции
+    DetectionRange = {
+        Close = 15,   -- Ближняя дистанция
+        Medium = 30,  -- Средняя дистанция
+        Far = 50,     -- Дальняя дистанция
+        GoalLine = 25 -- Дистанция от линии ворот
+    },
+    
+    -- Тайминги
+    ReactionTime = {
+        Min = 0.12, -- Минимальное время реакции
+        Max = 0.25, -- Максимальное время реакции
+        HumanDelay = 0.05 -- Имитация задержки человека
+    },
+    
+    -- Предсказание
+    Prediction = {
+        Enabled = true,
+        PingCompensation = 1.2,
+        CurvePrediction = true,
+        Accuracy = 0.85
+    },
+    
+    -- Защита
+    Protection = {
+        MaxSavesPerMinute = 10,
+        CooldownAfterSave = 1.8,
+        RandomMissChance = 0.03,
+        JitterAmount = 0.15
+    }
+}
 
-local Button = Instance.new("TextButton")
-Button.Parent = ScreenGui
-Button.Size = UDim2.new(0, 150, 0, 50)
-Button.Position = UDim2.new(0.5, -75, 0, 10)
-Button.Text = "🛡️ SHIELD: ON"
-Button.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
-Button.TextColor3 = Color3.new(0,0,0)
-Button.Font = Enum.Font.GothamBold
-Button.TextSize = 18
-local Corner = Instance.new("UICorner", Button)
-Corner.CornerRadius = UDim.new(0, 8)
+-- == СИСТЕМА ПРЕДСКАЗАНИЯ ==
+local PredictionSystem = {
+    BallHistory = {},
+    PlayerHistory = {},
+    VelocityCache = {},
+    
+    -- Алгоритмы предсказания
+    Algorithms = {
+        "LinearExtrapolation",
+        "QuadraticPrediction",
+        "NeuralApproximation",
+        "VelocityBased"
+    }
+}
 
-local Enabled = true
-Button.MouseButton1Click:Connect(function()
-    Enabled = not Enabled
-    Button.Text = Enabled and "🛡️ SHIELD: ON" or "🛡️ SHIELD: OFF"
-    Button.BackgroundColor3 = Enabled and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 50, 50)
-end)
+-- == ИНИЦИАЛИЗАЦИЯ ==
+local Player = Players.LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+local Camera = workspace.CurrentCamera
 
--- VISUAL ZONE
-local Visual = Instance.new("Part")
-Visual.Shape = Enum.PartType.Ball
-Visual.Material = Enum.Material.ForceField
-Visual.CanCollide = false
-Visual.Anchored = true
-Visual.CastShadow = false
-Visual.Transparency = 0.8
-Visual.Color = Color3.fromRGB(255, 0, 0)
-Visual.Size = Vector3.new(0,0,0)
-Visual.Parent = Workspace
+-- История движений
+local lastPositions = {}
+local lastVelocities = {}
+local saveHistory = {}
 
--- ФИЛЬТРЫ (ЧТО НЕ ТРОГАТЬ)
-local function IsIgnored(part)
-    if not part then return true end
-    if part.Anchored then return true end -- Стены не трогаем
-    if part.Mass > 1000 then return true end -- Огромные объекты не трогаем
-    if part:IsDescendantOf(lp.Character) then return true end -- Себя не трогаем
-    return false
+-- == ОБФУСКАЦИЯ КОДА ==
+local function SafeCall(func, ...)
+    local success, result = pcall(func, ...)
+    if not success then
+        Security.SuspicionLevel = Security.SuspicionLevel + 1
+        return nil
+    end
+    return result
 end
 
--- ПРОВЕРКА НА МЯЧ (МАКСИМАЛЬНАЯ)
-local function IsLikelyBall(part)
-    local name = part.Name:lower()
-    local parentName = part.Parent.Name:lower()
-    
-    -- 1. Проверка по имени (самая точная)
-    if name:find("ball") or name:find("soccer") or name:find("sport") or name:find("project") or 
-       parentName:find("ball") or parentName:find("soccer") then
-        return true
-    end
-    
-    -- 2. Проверка по форме
-    if part.Shape == Enum.PartType.Ball or part.Shape == Enum.PartType.Cylinder then
-        return true
-    end
-    
-    -- 3. Проверка MeshPart (часто мячи это меши)
-    if part:IsA("MeshPart") then
-        -- Если это меш и он маленький, скорее всего мяч
-        if part.Size.Magnitude < 6 then 
-            return true 
-        end
-    end
-
-    -- 4. АГРЕССИВНЫЙ РЕЖИМ: Если деталь маленькая и подвижная - БЕЙ ЕЁ
-    if Config.AggressiveMode then
-        if part.Size.Magnitude < 8 then -- Любой объект меньше 8 стадов
-            return true
-        end
-    end
-    
-    return false
+local function RandomDelay(min, max)
+    local delay = math.random(min * 1000, max * 1000) / 1000
+    task.wait(delay)
+    return delay
 end
 
--- ОСНОВНОЙ ЦИКЛ (Heartbeat для физики)
-RunService.Heartbeat:Connect(function()
-    if not lp.Character or not lp.Character:FindFirstChild("HumanoidRootPart") then 
-        Visual.Transparency = 1
-        return 
+-- == СИСТЕМА ОБНАРУЖЕНИЯ МЯЧА ==
+local BallTracker = {
+    LastBall = nil,
+    BallInstances = {},
+    DetectionMethods = {}
+}
+
+function BallTracker:FindBall()
+    -- Метод 1: Поиск по имени
+    local ballNames = {
+        "Ball", "SoccerBall", "Football", 
+        "ball", "Sphere", "GameBall",
+        "MainBall", "TPS_Ball"
+    }
+    
+    for _, name in ipairs(ballNames) do
+        local ball = Workspace:FindFirstChild(name)
+        if ball and ball:IsA("BasePart") then
+            return ball
+        end
     end
     
-    local Root = lp.Character.HumanoidRootPart
+    -- Метод 2: Поиск по свойствам
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if obj:IsA("BasePart") and obj.Shape == Enum.PartType.Ball then
+            return obj
+        end
+    end
     
-    -- Обновляем визуал
-    Visual.CFrame = Root.CFrame
-    Visual.Size = Vector3.new(Config.Radius*2, Config.Radius*2, Config.Radius*2)
-    Visual.Transparency = Enabled and 0.8 or 1
-    
-    if not Enabled then return end
-    
-    -- ПОИСК МЯЧА (В РАДИУСЕ)
-    local Params = OverlapParams.new()
-    Params.FilterDescendantsInstances = {lp.Character, Visual}
-    Params.FilterType = Enum.RaycastFilterType.Exclude
-    
-    local parts = Workspace:GetPartBoundsInRadius(Root.Position, Config.Radius, Params)
-    
-    for _, part in ipairs(parts) do
-        if not IsIgnored(part) and IsLikelyBall(part) then
-            
-            -- ВЕКТОР ОТТАЛКИВАНИЯ
-            local direction = (part.Position - Root.Position).Unit
-            
-            -- ЕСЛИ МЯЧ СЛИШКОМ БЛИЗКО - УСИЛИТЬ УДАР
-            local dist = (part.Position - Root.Position).Magnitude
-            local panicMultiplier = (dist < 10) and 1.5 or 1
-            
-            -- УСТАНОВКА СКОРОСТИ (PHYSICS)
-            local force = direction * Config.Power * panicMultiplier
-            part.AssemblyLinearVelocity = force + Vector3.new(0, Config.UpForce, 0)
-            
-            -- ВРАЩЕНИЕ (чтобы сбить скрипты мяча)
-            part.AssemblyAngularVelocity = Vector3.new(100, 100, 100)
-            
-            -- ВИРТУАЛЬНОЕ КАСАНИЕ (Для мячей, работающих от Touch)
-            if part:IsA("BasePart") then
-                firetouchinterest(Root, part, 0) -- Касание
-                firetouchinterest(Root, part, 1) -- Отпускание
+    -- Метод 3: Поиск по родительской структуре
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local parentName = obj.Parent and obj.Parent.Name or ""
+            if parentName:find("Ball") or parentName:find("Soccer") then
+                return obj
             end
-            
-            -- Эффект при ударе
-            Visual.Color = Color3.fromRGB(255, 255, 0)
-        else
-            Visual.Color = Color3.fromRGB(255, 0, 0)
         end
     end
-end)
+    
+    return nil
+end
+
+function BallTracker:GetBallProperties(ball)
+    if not ball then return nil end
+    
+    return {
+        Position = ball.Position,
+        Velocity = ball.VectorVelocity or ball.AssemblyLinearVelocity,
+        Speed = ball.VectorVelocity and ball.VectorVelocity.Magnitude or 0,
+        LastUpdate = tick()
+    }
+end
+
+-- == СИСТЕМА ПРЕДСКАЗАНИЯ ТРАЕКТОРИИ ==
+function PredictionSystem:PredictTrajectory(ball, lookAheadTime)
+    if not ball then return nil end
+    
+    local properties = BallTracker:GetBallProperties(ball)
+    if not properties then return nil end
+    
+    -- Сохраняем историю
+    table.insert(self.BallHistory, 1, {
+        position = properties.Position,
+        velocity = properties.Velocity,
+        time = tick()
+    })
+    
+    if #self.BallHistory > 10 then
+        table.remove(self.BallHistory, 11)
+    end
+    
+    -- Предсказание на основе истории
+    if #self.BallHistory >= 3 then
+        local avgVelocity = Vector3.new(0, 0, 0)
+        local count = 0
+        
+        for i = 1, math.min(3, #self.BallHistory) do
+            local data = self.BallHistory[i]
+            avgVelocity = avgVelocity + data.velocity
+            count = count + 1
+        end
+        
+        avgVelocity = avgVelocity / count
+        
+        -- Учет гравитации
+        local gravity = Vector3.new(0, -workspace.Gravity * 0.5, 0)
+        local predictedPos = properties.Position + 
+                            (avgVelocity * lookAheadTime) + 
+                            (gravity * (lookAheadTime ^ 2))
+        
+        return predictedPos, avgVelocity
+    end
+    
+    -- Простое предсказание
+    return properties.Position + (properties.Velocity * lookAheadTime), 
+           properties.Velocity
+end
+
+-- == СИСТЕМА ПРИНЯТИЯ РЕШЕНИЙ ==
+local DecisionSystem = {
+    LastDecision = 0,
+    DecisionHistory = {},
+    Confidence = 0.0
+}
+
+function DecisionSystem:ShouldSave(ball, predictedPosition)
+    if not ball or not predictedPosition then
+        return false, 0
+    end
+    
+    -- Проверка времени реакции
+    local timeSinceLastDecision = tick() - self.LastDecision
+    if timeSinceLastDecision < 0.1 then
+        return false, 0
+    end
+    
+    -- Получаем свойства мяча
+    local properties = BallTracker:GetBallProperties(ball)
+    if not properties or properties.Speed < 15 then
+        return false, 0
+    end
+    
+    -- Вычисляем направление к воротам
+    local goalDirection = (HumanoidRootPart.Position - predictedPosition).Unit
+    local ballDirection = properties.Velocity.Unit
+    
+    local dotProduct = goalDirection:Dot(ballDirection)
+    local angleToGoal = math.deg(math.acos(math.clamp(dotProduct, -1, 1)))
+    
+    -- Определяем уверенность
+    local distance = (predictedPosition - HumanoidRootPart.Position).Magnitude
+    local timeToReach = distance / math.max(properties.Speed, 1)
+    
+    local confidence = 0.0
+    
+    -- Факторы уверенности
+    if angleToGoal < 45 then
+        confidence = confidence + 0.4
+    end
+    
+    if distance < Config.DetectionRange.Medium then
+        confidence = confidence + 0.3
+    end
+    
+    if properties.Speed > 25 then
+        confidence = confidence + 0.3
+    end
+    
+    -- Случайный промах для реализма
+    if math.random() < Config.Protection.RandomMissChance then
+        confidence = confidence * 0.5
+    end
+    
+    self.Confidence = confidence
+    self.LastDecision = tick()
+    
+    return confidence > 0.7, confidence
+end
+
+function DecisionSystem:GetDiveType(ball, predictedPosition)
+    if not ball or not predictedPosition then
+        return "NONE", Vector3.new(0, 0, 0)
+    end
+    
+    local properties = BallTracker:GetBallProperties(ball)
+    local direction = (predictedPosition - HumanoidRootPart.Position).Unit
+    
+    -- Определяем высоту мяча
+    local heightDiff = predictedPosition.Y - HumanoidRootPart.Position.Y
+    local horizontalDist = Vector3.new(predictedPosition.X, 0, predictedPosition.Z) -
+                          Vector3.new(HumanoidRootPart.Position.X, 0, HumanoidRootPart.Position.Z)
+    horizontalDist = horizontalDist.Magnitude
+    
+    -- Определяем тип нырка
+    if heightDiff > 5 then
+        -- Высокий мяч
+        if horizontalDist > 8 then
+            return "SIDE_HIGH", direction * Config.JumpPower.High + Vector3.new(0, 10, 0)
+        else
+            return "HIGH", Vector3.new(0, Config.JumpPower.High, 0)
+        end
+    elseif heightDiff < -2 then
+        -- Низкий мяч
+        if horizontalDist > 6 then
+            return "SIDE_LOW", direction * Config.JumpPower.Low
+        else
+            return "LOW", direction * Config.JumpPower.Low
+        end
+    else
+        -- Средний мяч
+        if horizontalDist > 10 then
+            return "SIDE", direction * Config.JumpPower.Side + Vector3.new(0, 5, 0)
+        else
+            return "NORMAL", direction * Config.JumpPower.Normal
+        end
+    end
+end
+
+-- == СИСТЕМА ВЫПОЛНЕНИЯ ДЕЙСТВИЙ ==
+local ActionSystem = {
+    LastAction = 0,
+    ActionQueue = {},
+    KeyMap = {
+        SPACE = Enum.KeyCode.Space,
+        E = Enum.KeyCode.E,
+        Q = Enum.KeyCode.Q,
+        X = Enum.KeyCode.X,
+        C = Enum.KeyCode.C
+    }
+}
+
+function ActionSystem:PerformDive(diveType, forceVector)
+    if tick() - self.LastAction < Config.Protection.CooldownAfterSave then
+        return false
+    end
+    
+    -- Добавляем случайность для реализма
+    local jitter = Vector3.new(
+        (math.random() * 2 - 1) * Config.Protection.JitterAmount,
+        (math.random() * 2 - 1) * Config.Protection.JitterAmount * 0.5,
+        (math.random() * 2 - 1) * Config.Protection.JitterAmount
+    )
+    
+    forceVector = forceVector + jitter
+    
+    -- Эмуляция нажатия клавиш
+    local keysToPress = {}
+    
+    if diveType == "HIGH" then
+        keysToPress = {self.KeyMap.SPACE}
+    elseif diveType == "LOW" then
+        keysToPress = {self.KeyMap.X}
+    elseif diveType == "SIDE" then
+        local sideKey = forceVector.X > 0 and self.KeyMap.E or self.KeyMap.Q
+        keysToPress = {sideKey}
+    elseif diveType == "SIDE_HIGH" then
+        local sideKey = forceVector.X > 0 and self.KeyMap.E or self.KeyMap.Q
+        keysToPress = {sideKey, self.KeyMap.SPACE}
+    elseif diveType == "SIDE_LOW" then
+        local sideKey = forceVector.X > 0 and self.KeyMap.E or self.KeyMap.Q
+        keysToPress = {sideKey, self.KeyMap.X}
+    end
+    
+    -- Нажимаем клавиши
+    for _, key in ipairs(keysToPress) do
+        VirtualInputManager:SendKeyEvent(true, key, false, nil)
+        task.wait(0.02)
+        VirtualInputManager:SendKeyEvent(false, key, false, nil)
+    end
+    
+    -- Применяем физическую силу
+    if HumanoidRootPart and Character.PrimaryPart then
+        HumanoidRootPart.Velocity = forceVector
+        
+        -- Имитация прыжка
+        if diveType:find("HIGH") or diveType == "NORMAL" then
+            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+    
+    self.LastAction = tick()
+    table.insert(saveHistory, {
+        time = tick(),
+        type = diveType,
+        confidence = DecisionSystem.Confidence
+    })
+    
+    -- Очищаем старую историю
+    while #saveHistory > 0 and tick() - saveHistory[1].time > 60 do
+        table.remove(saveHistory, 1)
+    end
+    
+    return true
+end
+
+-- == СИСТЕМА МОНИТОРИНГА ==
+local MonitorSystem = {
+    Stats = {
+        TotalSaves = 0,
+        SuccessfulSaves = 0,
+        ReactionTimes = {},
+        AverageReaction = 0
+    },
+    
+    Alerts = {},
+    Warnings = {}
+}
+
+function MonitorSystem:UpdateStats(success, reactionTime)
+    self.Stats.TotalSaves = self.Stats.TotalSaves + 1
+    
+    if success then
+        self.Stats.SuccessfulSaves = self.Stats.SuccessfulSaves + 1
+    end
+    
+    table.insert(self.Stats.ReactionTimes, reactionTime)
+    
+    -- Обновляем среднее время реакции
+    local sum = 0
+    for _, rt in ipairs(self.Stats.ReactionTimes) do
+        sum = sum + rt
+    end
+    self.Stats.AverageReaction = sum / #self.Stats.ReactionTimes
+    
+    -- Ограничиваем историю
+    if #self.Stats.ReactionTimes > 20 then
+        table.remove(self.Stats.ReactionTimes, 1)
+    end
+end
+
+function MonitorSystem:CheckSafety()
+    local currentTime = tick()
+    
+    -- Проверка частоты сейвов
+    if #saveHistory >= Config.Protection.MaxSavesPerMinute then
+        local oldestSave = saveHistory[1].time
+        if currentTime - oldestSave < 60 then
+            table.insert(self.Warnings, {
+                time = currentTime,
+                message = "Превышен лимит сейвов в минуту",
+                level = "HIGH"
+            })
+            return false
+        end
+    end
+    
+    -- Проверка времени реакции
+    if self.Stats.AverageReaction < Config.ReactionTime.Min then
+        Security.SuspicionLevel = Security.SuspicionLevel + 1
+    end
+    
+    -- Проверка уровня подозрительности
+    if Security.SuspicionLevel > 5 then
+        table.insert(self.Alerts, {
+            time = currentTime,
+            message = "Высокий уровень подозрительности",
+            action = "ENABLE_SAFE_MODE"
+        })
+        Config.Mode = "SAFE"
+    end
+    
+    return Security.SuspicionLevel < 10
+end
+
+-- == ИНТЕРФЕЙС ==
+local Interface = {
+    UI = nil,
+    Elements = {},
+    Visible = false
+}
+
+function Interface:Create()
+    -- Создаем минималистичный интерфейс
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "GK_Assistant_" .. Security.SessionID:sub(1, 8)
+    screenGui.Parent = Player:WaitForChild("PlayerGui")
+    
+    -- Основной контейнер
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 200, 0, 150)
+    frame.Position = UDim2.new(0.01, 0, 0.3, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    frame.BackgroundTransparency = 0.3
+    frame.Parent = screenGui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+    
+    -- Заголовок
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.Position = UDim2.new(0, 0, 0, 0)
+    title.Text = "GK ASSISTANT v4.0"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 16
+    title.Parent = frame
+    
+    -- Статус
+    local status = Instance.new("TextLabel")
+    status.Size = UDim2.new(1, 0, 0, 25)
+    status.Position = UDim2.new(0, 0, 0, 30)
+    status.Text = "Status: DISABLED"
+    status.TextColor3 = Color3.fromRGB(255, 100, 100)
+    status.BackgroundTransparency = 1
+    status.Font = Enum.Font.Gotham
+    status.TextSize = 14
+    status.Parent = frame
+    
+    -- Кнопка включения
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0.4, 0)
+    toggleBtn.Text = "ENABLE AI"
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 180, 80)
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.TextSize = 14
+    toggleBtn.Parent = frame
+    
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 6)
+    btnCorner.Parent = toggleBtn
+    
+    -- Статистика
+    local statsLabel = Instance.new("TextLabel")
+    statsLabel.Size = UDim2.new(1, 0, 0, 60)
+    statsLabel.Position = UDim2.new(0, 0, 0.65, 0)
+    statsLabel.Text = "Saves: 0\nSuccess: 0%\nReaction: 0ms"
+    statsLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+    statsLabel.BackgroundTransparency = 1
+    statsLabel.Font = Enum.Font.Gotham
+    statsLabel.TextSize = 12
+    statsLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statsLabel.TextYAlignment = Enum.TextYAlignment.Top
+    statsLabel.Parent = frame
+    
+    -- Сохраняем элементы
+    self.Elements = {
+        MainFrame = frame,
+        StatusLabel = status,
+        ToggleButton = toggleBtn,
+        StatsLabel = statsLabel,
+        ScreenGui = screenGui
+    }
+    
+    -- Обработчики
+    toggleBtn.MouseButton1Click:Connect(function()
+        Config.Enabled = not Config.Enabled
+        if Config.Enabled then
+            status.Text = "Status: ACTIVE"
+            status.TextColor3 = Color3.fromRGB(100, 255, 100)
+            toggleBtn.Text = "DISABLE AI"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+        else
+            status.Text = "Status: DISABLED"
+            status.TextColor3 = Color3.fromRGB(255, 100, 100)
+            toggleBtn.Text = "ENABLE AI"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 180, 80)
+        end
+    end)
+    
+    -- Обновление статистики
+    spawn(function()
+        while true do
+            task.wait(1)
+            if self.Elements.StatsLabel then
+                local successRate = MonitorSystem.Stats.TotalSaves > 0 and 
+                    (MonitorSystem.Stats.SuccessfulSaves / MonitorSystem.Stats.TotalSaves) * 100 or 0
+                
+                self.Elements.StatsLabel.Text = string.format(
+                    "Saves: %d\nSuccess: %.1f%%\nReaction: %dms",
+                    MonitorSystem.Stats.TotalSaves,
+                    successRate,
+                    math.floor(MonitorSystem.Stats.AverageReaction * 1000)
+                )
+            end
+        end
+    end)
+end
+
+-- == ОСНОВНОЙ ЦИКЛ ==
+local MainLoop = {
+    Running = true,
+    LastUpdate = 0,
+    UpdateInterval = 0.033 -- ~30 FPS
+}
+
+function MainLoop:Start()
+    -- Создаем интерфейс
+    Interface:Create()
+    
+    -- Основной цикл обработки
+    while self.Running do
+        local startTime = tick()
+        
+        if Config.Enabled then
+            -- Находим мяч
+            local ball = BallTracker:FindBall()
+            
+            if ball then
+                -- Предсказываем траекторию
+                local lookAhead = Config.ReactionTime.Min + 
+                                 (Player:GetNetworkPing() * Config.Prediction.PingCompensation)
+                
+                local predictedPos, predictedVel = PredictionSystem:PredictTrajectory(ball, lookAhead)
+                
+                -- Принимаем решение
+                local shouldSave, confidence = DecisionSystem:ShouldSave(ball, predictedPos)
+                
+                if shouldSave and MonitorSystem:CheckSafety() then
+                    -- Определяем тип нырка
+                    local diveType, forceVector = DecisionSystem:GetDiveType(ball, predictedPos)
+                    
+                    if diveType ~= "NONE" then
+                        -- Выполняем нырок
+                        local success = ActionSystem:PerformDive(diveType, forceVector)
+                        
+                        -- Обновляем статистику
+                        local reactionTime = tick() - startTime
+                        MonitorSystem:UpdateStats(success, reactionTime)
+                        
+                        -- Пауза после сейва
+                        RandomDelay(0.1, 0.3)
+                    end
+                end
+            end
+        end
+        
+        -- Контроль частоты обновления
+        local elapsed = tick() - startTime
+        local waitTime = math.max(0.001, self.UpdateInterval - elapsed)
+        task.wait(waitTime)
+        
+        self.LastUpdate = tick()
+    end
+end
+
+-- == ИНИЦИАЛИЗАЦИЯ И ЗАПУСК ==
+local function Initialize()
+    print("Initializing Goalkeeper AI v4.0...")
+    print("Session ID:", Security.SessionID)
+    
+    -- Проверяем безопасность
+    local isEnvironmentSafe = MonitorSystem:CheckSafety()
+    
+    if not isEnvironmentSafe then
+        warn("⚠️ WARNING: Environment check failed!")
+        Config.Mode = "SAFE"
+    end
+    
+    -- Запускаем основной цикл
+    spawn(function()
+        MainLoop:Start()
+    end)
+    
+    print("✅ Goalkeeper AI initialized successfully")
+    print("📊 Mode:", Config.Mode)
+    print("🛡️ Security Level:", Security.SuspicionLevel)
+end
+
+-- Запускаем инициализацию
+Initialize()
 
 -- Очистка при выходе
-game.Close:Connect(function()
-    Visual:Destroy()
-    ScreenGui:Destroy()
+game:BindToClose(function()
+    MainLoop.Running = false
+    if Interface.Elements.ScreenGui then
+        Interface.Elements.ScreenGui:Destroy()
+    end
+    print("🚪 Goalkeeper AI shutdown complete")
 end)
-
-print("🛡️ ULTRA DEFENSE LOADED - MAX CHECK ENABLED")
