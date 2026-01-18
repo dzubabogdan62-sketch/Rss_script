@@ -272,27 +272,26 @@ local DiveSection = GkTab:Section({
 
 -- ===== AUTO GK V2 FUNCTIONS =====
 local GKV2_MIN_BALL_SPEED = 8
-local GKV2_NEAR_GOAL_DISTANCE = 30
+local GKV2_NEAR_GOAL_DISTANCE_4v4 = 25
+local GKV2_NEAR_GOAL_DISTANCE_7v7 = 40
 local GKV2_DIVE_COOLDOWN = 0.6
 local GKV2_ENABLED = false
 local GKV2_CONNECTION = nil
+local GK_GOAL_Z_POSITION = -150 -- Approximate goal position
 
 local function isBallHeadingToGoal(ball, playerPos)
     if not ball or not playerPos then return false end
     
     local ballVel = ball.AssemblyLinearVelocity
-    local ballToGoal = (playerPos - ball.Position)
+    local ballSpeed = ballVel.Magnitude
     
-    if ballVel.Magnitude < GKV2_MIN_BALL_SPEED then return false end
+    if ballSpeed < GKV2_MIN_BALL_SPEED then return false end
     
-    local dotProduct = ballVel:Dot(ballToGoal)
-    return dotProduct > 0
-end
-
-local function isPlayerNearGoal(playerPos)
-    if not playerPos then return false end
-    local distance = (playerPos - Vector3.new(0, 5, 60)).Magnitude
-    return distance <= GKV2_NEAR_GOAL_DISTANCE
+    -- Check if ball is moving towards the goal (negative Z direction for defending goal)
+    local ballToGoal = (Vector3.new(playerPos.X, playerPos.Y, GK_GOAL_Z_POSITION) - ball.Position)
+    local dotProduct = ballVel:Dot(ballToGoal.Unit)
+    
+    return dotProduct > 2 -- Ball velocity component towards goal
 end
 
 local function shouldDive(ball, playerPos)
@@ -305,71 +304,98 @@ local function shouldDive(ball, playerPos)
     if not isBallHeadingToGoal(ball, playerPos) then return false end
     
     local distance = (ball.Position - playerPos).Magnitude
-    return distance <= 30
+    return distance <= 35 and distance > 0
+end
+
+local function isPlayerNearGoal(playerPos)
+    if not playerPos then return false end
+    
+    local goalPos = Vector3.new(playerPos.X, 5, GK_GOAL_Z_POSITION)
+    local distance = (playerPos - goalPos).Magnitude
+    
+    -- Check game mode based on distance to center
+    local centerDistance = math.abs(playerPos.X)
+    local gameMode = centerDistance < 30 and "4v4" or "7v7"
+    
+    if gameMode == "7v7" then
+        return distance <= GKV2_NEAR_GOAL_DISTANCE_7v7
+    else
+        return distance <= GKV2_NEAR_GOAL_DISTANCE_4v4
+    end
 end
 
 local function calculateDiveDirection(ball, playerCFrame)
-    if not ball or not playerCFrame then return "Center" end
+    if not ball or not playerCFrame then return "Space" end
     
-    local playerPos = playerCFrame.Position
     local ballPos = ball.Position
     local ballVel = ball.AssemblyLinearVelocity
     
-    local predictedPos = ballPos + ballVel * 0.15
+    -- Predict ball position with higher prediction time for accuracy
+    local predictedPos = ballPos + ballVel * 0.2
     local localBallPos = playerCFrame:PointToObjectSpace(predictedPos)
     
     local dirX = localBallPos.X
     local dirY = localBallPos.Y
+    local dirZ = localBallPos.Z
     
-    if dirY > 3 then
-        if dirX < -2 then
-            return "UpperLeft"
-        elseif dirX > 2 then
-            return "UpperRight"
+    -- Determine jump type based on predicted ball position
+    -- High ball (above head)
+    if dirY > 4 then
+        if dirX < -3 then
+            return "UpperLeft"  -- E + Space equivalent
+        elseif dirX > 3 then
+            return "UpperRight"  -- Q + Space equivalent
         else
-            return "Upper"
+            return "Upper"  -- Space + X equivalent
         end
-    elseif dirY < -2 then
-        return "Low"
+    -- Low ball (below waist)
+    elseif dirY < -1 then
+        return "Low"  -- X equivalent
+    -- Medium height (normal saves)
     else
-        if dirX < -2 then
-            return "Left"
-        elseif dirX > 2 then
-            return "Right"
+        if dirX < -3 then
+            return "Left"  -- Q equivalent
+        elseif dirX > 3 then
+            return "Right"  -- E equivalent
         else
-            return "Center"
+            return "Center"  -- Space equivalent
         end
     end
 end
 
 local function doDive(direction, leftDiveButton, rightDiveButton, jumpButton)
-    if direction == "Left" or direction == "UpperLeft" then
-        if leftDiveButton then
-            local connections = getconnections(leftDiveButton.MouseButton1Click)
+    if not leftDiveButton or not rightDiveButton or not jumpButton then return end
+    
+    local function clickButton(btn)
+        if typeof(getconnections) == "function" and btn.MouseButton1Click then
+            local connections = getconnections(btn.MouseButton1Click)
             if connections and #connections > 0 then
-                connections[1]:Fire()
-            else
-                leftDiveButton.MouseButton1Click:Fire()
+                for _, conn in ipairs(connections) do
+                    conn:Fire()
+                end
+                return
             end
         end
-    elseif direction == "Right" or direction == "UpperRight" then
-        if rightDiveButton then
-            local connections = getconnections(rightDiveButton.MouseButton1Click)
-            if connections and #connections > 0 then
-                connections[1]:Fire()
-            else
-                rightDiveButton.MouseButton1Click:Fire()
-            end
-        end
-    elseif direction == "Upper" or direction == "Center" or direction == "Low" then
-        if jumpButton then
-            local connections = getconnections(jumpButton.MouseButton1Click)
-            if connections and #connections > 0 then
-                connections[1]:Fire()
-            else
-                jumpButton.MouseButton1Click:Fire()
-            end
-        end
+        btn.MouseButton1Click:Fire()
+    end
+    
+    if direction == "Left" then
+        clickButton(leftDiveButton)
+    elseif direction == "Right" then
+        clickButton(rightDiveButton)
+    elseif direction == "UpperLeft" then
+        clickButton(leftDiveButton)
+        task.wait(0.05)
+        clickButton(jumpButton)
+    elseif direction == "UpperRight" then
+        clickButton(rightDiveButton)
+        task.wait(0.05)
+        clickButton(jumpButton)
+    elseif direction == "Low" then
+        -- Hold button pattern for low dive
+        clickButton(jumpButton)
+    elseif direction == "Upper" or direction == "Center" then
+        clickButton(jumpButton)
     end
 end
 
@@ -411,17 +437,30 @@ local GKV2Toggle = GKV2Section:Toggle({
             if not ball then return end
             
             local playerPos = HumanoidRootPart.Position
+            if not playerPos then return end
             
+            -- Check if should dive
             if not shouldDive(ball, playerPos) then return end
+            
+            -- Check if near goal
             if not isPlayerNearGoal(playerPos) then return end
             
+            -- Check cooldown
             local currentTime = tick()
             if currentTime - lastDiveTime < GKV2_DIVE_COOLDOWN then return end
             
+            -- Calculate and perform dive
             local diveDir = calculateDiveDirection(ball, HumanoidRootPart.CFrame)
             doDive(diveDir, leftDiveButton, rightDiveButton, jumpButton)
             lastDiveTime = currentTime
         end)
+        
+        WindUI:Notify({
+            Title = "Auto GK V2",
+            Icon = "check",
+            Content = "Auto GK V2 Enabled",
+            Duration = 3,
+        })
     end
 })
 
@@ -439,15 +478,28 @@ GKV2Section:Slider({
 })
 
 GKV2Section:Slider({
-    Title = "Near Goal Distance",
+    Title = "Near Goal Distance 4v4",
     Step = 1,
     Value = {
         Min = 15,
-        Max = 50,
-        Default = 30,
+        Max = 40,
+        Default = 25,
     },
     Callback = function(v)
-        GKV2_NEAR_GOAL_DISTANCE = v
+        GKV2_NEAR_GOAL_DISTANCE_4v4 = v
+    end
+})
+
+GKV2Section:Slider({
+    Title = "Near Goal Distance 7v7",
+    Step = 1,
+    Value = {
+        Min = 25,
+        Max = 60,
+        Default = 40,
+    },
+    Callback = function(v)
+        GKV2_NEAR_GOAL_DISTANCE_7v7 = v
     end
 })
 
