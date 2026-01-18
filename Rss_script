@@ -46,7 +46,7 @@ local function UpdateHitbox()
 
     local shouldShow = IsReachEnabled and IsVisualizerEnabled
     
-    RSSHitbox.Transparency = shouldShow and 1 or 1
+    RSSHitbox.Transparency = shouldShow and 0.8 or 1
     if Glow then 
         Glow.Transparency = shouldShow and 0.7 or 1
     end
@@ -72,7 +72,11 @@ local function ReachLoop()
     local ball = FindBall()
     if not ball then return end
 
-    local effectiveReach = math.max(HitboxSize.X, HitboxSize.Y, HitboxSize.Z) / 2
+    local baseReach = math.max(HitboxSize.X, HitboxSize.Y, HitboxSize.Z) / 2
+    local velocity = ball.AssemblyLinearVelocity or Vector3.new()
+    local speed = velocity.Magnitude
+    local dynamicBonus = math.clamp(speed * 0.05, 0, baseReach)
+    local effectiveReach = baseReach + dynamicBonus
 
     if (ball.Position - root.Position).Magnitude <= effectiveReach then
         for _, part in LocalPlayer.Character:GetChildren() do
@@ -112,7 +116,7 @@ local function SetupStamina()
         speeds = frame:WaitForChild("Speeds", 5)
         defaultWalk = speeds.Walk.Value
 
-        if InfiniteStaminaEnabled and speeds then
+        if getgenv().InfiniteStaminaEnabled and speeds then
             speeds.Walk.Value = speeds.Run.Value
         end
     end)
@@ -294,11 +298,14 @@ local DiveToggle = DiveSection:Toggle({
         
         if not enabled then return end
 
-        -- НАСТРОЙКИ (Можно менять под себя)
-        local DIVE_DISTANCE = 14     -- Увеличил радиус, так как теперь есть предсказание
-        local DIVE_COOLDOWN = 0.8    -- Задержка между прыжками
-        local PREDICTION_TIME = 0.35 -- На сколько секунд вперед смотреть (чем быстрее мяч, тем важнее)
-        local MIN_BALL_SPEED = 10    -- Минимальная скорость мяча для реакции (чтобы не прыгать на медленные)
+        local DIVE_DISTANCE = 14
+        local DIVE_COOLDOWN = 0.8
+        local BASE_PREDICTION_TIME = 0.25
+        local MAX_PREDICTION_TIME = 0.6
+        local PREDICTION_SPEED_FACTOR = 0.01
+        local MIN_BALL_SPEED = 10
+        local SPIN_INFLUENCE = 0.03
+        local LAG_DISTANCE_MULTIPLIER = 1.25
 
         local lastDiveTime = 0
         local leftDiveButton = nil
@@ -322,7 +329,7 @@ local DiveToggle = DiveSection:Toggle({
             end
         end
 
-        local function autoDive(predictedPos)
+        local function autoDive(predictedPos, extraDistance)
             local currentTime = tick()
             
             if currentTime - lastDiveTime < DIVE_COOLDOWN then return end
@@ -331,7 +338,6 @@ local DiveToggle = DiveSection:Toggle({
             local playerCFrame = HumanoidRootPart.CFrame
             local localBallPos = playerCFrame:PointToObjectSpace(predictedPos)
             
-            -- Логика направления
             if localBallPos.X < -1 then -- Левее центра
                 clickButton(leftDiveButton)
                 lastDiveTime = currentTime
@@ -342,27 +348,41 @@ local DiveToggle = DiveSection:Toggle({
             end
         end
 
-        getgenv().AutoDiveConnection = RunService.Heartbeat:Connect(function()
-            -- Ищем мяч (проверяем разные имена, как в оригинале)
+        getgenv().AutoDiveConnection = RunService.Heartbeat:Connect(function(dt)
             local ball = workspace:FindFirstChild("ball") or workspace:FindFirstChild("TPS") or workspace:FindFirstChild("PSoccerBall")
             if not ball then return end
             
-            -- Проверка скорости мяча
             local velocity = ball.AssemblyLinearVelocity
-            if velocity.Magnitude < MIN_BALL_SPEED then return end -- Игнорируем медленные мячи
+            local speed = velocity.Magnitude
+            if speed < MIN_BALL_SPEED then return end
 
-            -- Предсказание позиции: Позиция + (Скорость * Время)
-            local predictedPosition = ball.Position + (velocity * PREDICTION_TIME)
-            
-            -- Считаем дистанцию до ПРЕДСКАЗАННОЙ точки, а не текущей
+            local predictionTime = BASE_PREDICTION_TIME + speed * PREDICTION_SPEED_FACTOR
+            predictionTime = math.clamp(predictionTime, BASE_PREDICTION_TIME, MAX_PREDICTION_TIME)
+
+            local predictedPosition = ball.Position + (velocity * predictionTime)
+
+            local angular = ball.AssemblyAngularVelocity
+            local spinStrength = angular.Magnitude
+            if spinStrength > 0 then
+                local forward = velocity.Magnitude > 0 and velocity.Unit or (HumanoidRootPart.Position - ball.Position).Unit
+                local side = forward:Cross(Vector3.new(0, 1, 0))
+                if side.Magnitude > 0 then
+                    side = side.Unit
+                    local spinOffset = side * spinStrength * SPIN_INFLUENCE
+                    predictedPosition = predictedPosition + spinOffset
+                end
+            end
+
             local distance = (HumanoidRootPart.Position - predictedPosition).Magnitude
-            
-            -- Проверяем, летит ли мяч в нашу сторону (простая проверка дистанции)
-            -- Если предсказанная точка ближе, чем текущая - значит мяч летит К НАМ
             local currentDist = (HumanoidRootPart.Position - ball.Position).Magnitude
             
-            if distance <= DIVE_DISTANCE and distance < currentDist then
-                autoDive(predictedPosition)
+            local effectiveDiveDistance = DIVE_DISTANCE
+            if dt and dt > 0.02 then
+                effectiveDiveDistance = effectiveDiveDistance * LAG_DISTANCE_MULTIPLIER
+            end
+
+            if distance <= effectiveDiveDistance and distance < currentDist then
+                autoDive(predictedPosition, effectiveDiveDistance - distance)
             end
         end)
     end
@@ -690,6 +710,9 @@ local PlayerTab = Window:Tab({
 local PlayerSection = PlayerTab:Section({
     Title = "Soon."
 })
+
+local function CreateMainUI()
+end
 
 local Dialog = Window:Dialog({
     Icon = "bird",
