@@ -17,38 +17,62 @@ local function CreateHitbox()
 
     RSSHitbox = Instance.new("BoxHandleAdornment")
     RSSHitbox.Name = "RSSHitbox"
-    RSSHitbox.AlwaysOnTop = false
+    RSSHitbox.AlwaysOnTop = true
     RSSHitbox.ZIndex = 10
-    RSSHitbox.Color3 = Color3.fromRGB(0, 255, 0)
+    RSSHitbox.Color3 = Color3.fromRGB(0, 200, 255)
     RSSHitbox.Transparency = 1
     RSSHitbox.Size = HitboxSize
     RSSHitbox.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     RSSHitbox.Parent = Workspace.Terrain
 
-    local Glow = Instance.new("BoxHandleAdornment")
-    Glow.Name = "Glow"
-    Glow.AlwaysOnTop = true
-    Glow.ZIndex = 0
-    Glow.Color3 = Color3.fromRGB(0, 255, 100)
-    Glow.Transparency = 1
-    Glow.Size = HitboxSize * 1
-    Glow.Parent = RSSHitbox
+    local InnerGlow = Instance.new("BoxHandleAdornment")
+    InnerGlow.Name = "InnerGlow"
+    InnerGlow.AlwaysOnTop = true
+    InnerGlow.ZIndex = 5
+    InnerGlow.Color3 = Color3.fromRGB(100, 255, 200)
+    InnerGlow.Transparency = 1
+    InnerGlow.Size = HitboxSize * 0.8
+    InnerGlow.Parent = RSSHitbox
+
+    local OuterGlow = Instance.new("BoxHandleAdornment")
+    OuterGlow.Name = "OuterGlow"
+    OuterGlow.AlwaysOnTop = true
+    OuterGlow.ZIndex = 2
+    OuterGlow.Color3 = Color3.fromRGB(0, 255, 100)
+    OuterGlow.Transparency = 1
+    OuterGlow.Size = HitboxSize * 1.3
+    OuterGlow.Parent = RSSHitbox
 end
 
 local function UpdateHitbox()
     if not RSSHitbox then return end
     
     RSSHitbox.Size = HitboxSize
-    local Glow = RSSHitbox:FindFirstChild("Glow")
-    if Glow then 
-        Glow.Size = HitboxSize * 1
+    local InnerGlow = RSSHitbox:FindFirstChild("InnerGlow")
+    local OuterGlow = RSSHitbox:FindFirstChild("OuterGlow")
+    
+    if InnerGlow then 
+        InnerGlow.Size = HitboxSize * 0.8
+    end
+    if OuterGlow then 
+        OuterGlow.Size = HitboxSize * 1.3
     end
 
     local shouldShow = IsReachEnabled and IsVisualizerEnabled
     
-    RSSHitbox.Transparency = shouldShow and 1 or 1
-    if Glow then 
-        Glow.Transparency = shouldShow and 0.7 or 1
+    if shouldShow then
+        local pulse = math.sin(tick() * 3) * 0.3 + 0.5
+        RSSHitbox.Transparency = 0.3 + (pulse * 0.4)
+        if InnerGlow then 
+            InnerGlow.Transparency = 0.4 + (pulse * 0.3)
+        end
+        if OuterGlow then 
+            OuterGlow.Transparency = 0.6 + (pulse * 0.2)
+        end
+    else
+        RSSHitbox.Transparency = 1
+        if InnerGlow then InnerGlow.Transparency = 1 end
+        if OuterGlow then OuterGlow.Transparency = 1 end
     end
 end
 
@@ -517,8 +541,8 @@ GKV2Section:Slider({
 })
 
 local DiveToggle = DiveSection:Toggle({
-    Title = "Auto Dive [BETA|MIGHT BUG]",
-    Desc = "USE THIS WHEN BEING GK",
+    Title = "Auto Dive (Improved)",
+    Desc = "Smart dive with velocity prediction",
     Default = false,
     Callback = function(enabled)
         local Players = game:GetService("Players")
@@ -528,10 +552,6 @@ local DiveToggle = DiveSection:Toggle({
         local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
         local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
-        if not getgenv().AutoDiveConnection then
-            getgenv().AutoDiveConnection = nil
-        end
-        
         if getgenv().AutoDiveConnection then
             getgenv().AutoDiveConnection:Disconnect()
             getgenv().AutoDiveConnection = nil
@@ -541,75 +561,98 @@ local DiveToggle = DiveSection:Toggle({
             return
         end
 
-        local DIVE_DISTANCE = 10.3
-        local DIVE_COOLDOWN = 0.7
-        local SMART_DIVE = true
+        local DIVE_DISTANCE = 20
+        local DIVE_COOLDOWN = 0.5
+        local PREDICTION_TIME = 0.15
+        local MIN_BALL_SPEED = 5
 
         local lastDiveTime = 0
         local leftDiveButton = nil
         local rightDiveButton = nil
+        local jumpButton = nil
 
-        local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-        local mobileCTRL = playerGui:WaitForChild("MobileCTRL")
-        local touchControlFrame = mobileCTRL:WaitForChild("TouchControlFrame")
-        local jumpButton = touchControlFrame:WaitForChild("JumpButton")
-        leftDiveButton = jumpButton:WaitForChild("LeftDive")
-        rightDiveButton = jumpButton:WaitForChild("RightDive")
+        pcall(function()
+            local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+            local mobileCTRL = playerGui:WaitForChild("MobileCTRL")
+            local touchControlFrame = mobileCTRL:WaitForChild("TouchControlFrame")
+            jumpButton = touchControlFrame:WaitForChild("JumpButton")
+            leftDiveButton = jumpButton:WaitForChild("LeftDive")
+            rightDiveButton = jumpButton:WaitForChild("RightDive")
+        end)
 
-        local function clickLeftDive()
-            local connections = getconnections(leftDiveButton.MouseButton1Click)
-            if connections and #connections > 0 then
-                connections[1]:Fire()
-            else
-                leftDiveButton.MouseButton1Click:Fire()
+        local function clickButton(btn)
+            if not btn then return end
+            if typeof(getconnections) == "function" and btn.MouseButton1Click then
+                local connections = getconnections(btn.MouseButton1Click)
+                if connections and #connections > 0 then
+                    connections[1]:Fire()
+                    return
+                end
             end
+            btn.MouseButton1Click:Fire()
         end
 
-        local function clickRightDive()
-            local connections = getconnections(rightDiveButton.MouseButton1Click)
-            if connections and #connections > 0 then
-                connections[1]:Fire()
-            else
-                rightDiveButton.MouseButton1Click:Fire()
-            end
-        end
-
-        local function autoDive(ballPosition)
+        local function smartDive(ballPos, ballVel)
             local currentTime = tick()
             
             if currentTime - lastDiveTime < DIVE_COOLDOWN then
                 return
             end
             
-            if SMART_DIVE then
-                local playerCFrame = HumanoidRootPart.CFrame
-                local localBallPos = playerCFrame:PointToObjectSpace(ballPosition)
-                
-                if localBallPos.X < 0 then
-                    clickLeftDive()
+            local predictedPos = ballPos + ballVel * PREDICTION_TIME
+            local playerCFrame = HumanoidRootPart.CFrame
+            local localBallPos = playerCFrame:PointToObjectSpace(predictedPos)
+            
+            local dirX = localBallPos.X
+            local dirY = localBallPos.Y
+            local speed = ballVel.Magnitude
+            
+            if dirY > 5 and speed > 15 then
+                if dirX < -2 then
+                    clickButton(leftDiveButton)
+                elseif dirX > 2 then
+                    clickButton(rightDiveButton)
                 else
-                    clickRightDive()
+                    clickButton(jumpButton)
                 end
+            elseif dirY < -1 then
+                clickButton(jumpButton)
             else
-                clickLeftDive()
+                if dirX < -1.5 then
+                    clickButton(leftDiveButton)
+                elseif dirX > 1.5 then
+                    clickButton(rightDiveButton)
+                else
+                    clickButton(jumpButton)
+                end
             end
             
             lastDiveTime = currentTime
         end
 
         getgenv().AutoDiveConnection = RunService.Heartbeat:Connect(function()
-            local ball = workspace:FindFirstChild("ball")
+            local ball = Workspace:FindFirstChild("ball") or Workspace:FindFirstChild("TPS") or Workspace:FindFirstChild("PSoccerBall")
             if not ball then return end
             
             local ballPos = ball.Position
-            if not ballPos then return end
+            local ballVel = ball.AssemblyLinearVelocity
+            local ballSpeed = ballVel.Magnitude
+            
+            if ballSpeed < MIN_BALL_SPEED then return end
             
             local distance = (HumanoidRootPart.Position - ballPos).Magnitude
             
-            if distance <= DIVE_DISTANCE then
-                autoDive(ballPos)
+            if distance <= DIVE_DISTANCE and distance > 0 then
+                smartDive(ballPos, ballVel)
             end
         end)
+
+        WindUI:Notify({
+            Title = "Auto Dive",
+            Icon = "check",
+            Content = "Auto Dive Enabled",
+            Duration = 2,
+        })
     end
 })
 
