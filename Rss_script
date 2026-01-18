@@ -297,11 +297,11 @@ local DiveSection = GkTab:Section({
 -- ===== AUTO GK V2 FUNCTIONS =====
 local GKV2_MIN_BALL_SPEED = 8
 local GKV2_NEAR_GOAL_DISTANCE_4v4 = 25
-local GKV2_NEAR_GOAL_DISTANCE_7v7 = 40
-local GKV2_DIVE_COOLDOWN = 0.6
+local GKV2_NEAR_GOAL_DISTANCE_7v7 = 45
+local GKV2_DIVE_COOLDOWN = 0.45
 local GKV2_ENABLED = false
 local GKV2_CONNECTION = nil
-local GK_GOAL_Z_POSITION = -150 -- Approximate goal position
+local GK_GOAL_Z_POSITION = -150
 
 local function isBallHeadingToGoal(ball, playerPos)
     if not ball or not playerPos then return false end
@@ -311,11 +311,13 @@ local function isBallHeadingToGoal(ball, playerPos)
     
     if ballSpeed < GKV2_MIN_BALL_SPEED then return false end
     
-    -- Check if ball is moving towards the goal (negative Z direction for defending goal)
+    -- Проверяем направление мяча к воротам (Z координата)
     local ballToGoal = (Vector3.new(playerPos.X, playerPos.Y, GK_GOAL_Z_POSITION) - ball.Position)
-    local dotProduct = ballVel:Dot(ballToGoal.Unit)
+    local normalizedDir = ballToGoal.Unit
+    local dotProduct = ballVel:Dot(normalizedDir)
     
-    return dotProduct > 2 -- Ball velocity component towards goal
+    -- Мяч летит в ворота если dot product > 0 (угол < 90 градусов)
+    return dotProduct > ballSpeed * 0.3
 end
 
 local function shouldDive(ball, playerPos)
@@ -353,36 +355,38 @@ local function calculateDiveDirection(ball, playerCFrame)
     
     local ballPos = ball.Position
     local ballVel = ball.AssemblyLinearVelocity
+    local ballSpeed = ballVel.Magnitude
     
-    -- Predict ball position with higher prediction time for accuracy
-    local predictedPos = ballPos + ballVel * 0.2
+    -- Предсказание с учетом скорости
+    local predictionTime = math.clamp(0.1 + (ballSpeed / 100), 0.1, 0.3)
+    local predictedPos = ballPos + ballVel * predictionTime
     local localBallPos = playerCFrame:PointToObjectSpace(predictedPos)
     
     local dirX = localBallPos.X
     local dirY = localBallPos.Y
-    local dirZ = localBallPos.Z
     
-    -- Determine jump type based on predicted ball position
-    -- High ball (above head)
-    if dirY > 4 then
-        if dirX < -3 then
-            return "UpperLeft"  -- E + Space equivalent
-        elseif dirX > 3 then
-            return "UpperRight"  -- Q + Space equivalent
+    -- Умное определение высоты в зависимости от скорости
+    local highThreshold = ballSpeed > 20 and 3 or (ballSpeed > 15 and 4 or 5)
+    local lowThreshold = ballSpeed > 20 and -0.5 or -1
+    local sideThreshold = ballSpeed > 20 and 1.5 or (ballSpeed > 15 and 2 or 2.5)
+    
+    if dirY > highThreshold then
+        if dirX < -sideThreshold then
+            return "UpperLeft"
+        elseif dirX > sideThreshold then
+            return "UpperRight"
         else
-            return "Upper"  -- Space + X equivalent
+            return "Upper"
         end
-    -- Low ball (below waist)
-    elseif dirY < -1 then
-        return "Low"  -- X equivalent
-    -- Medium height (normal saves)
+    elseif dirY < lowThreshold then
+        return "Low"
     else
-        if dirX < -3 then
-            return "Left"  -- Q equivalent
-        elseif dirX > 3 then
-            return "Right"  -- E equivalent
+        if dirX < -sideThreshold then
+            return "Left"
+        elseif dirX > sideThreshold then
+            return "Right"
         else
-            return "Center"  -- Space equivalent
+            return "Center"
         end
     end
 end
@@ -463,11 +467,19 @@ local GKV2Toggle = GKV2Section:Toggle({
             local playerPos = HumanoidRootPart.Position
             if not playerPos then return end
             
-            -- Check if should dive
-            if not shouldDive(ball, playerPos) then return end
+            local ballVel = ball.AssemblyLinearVelocity
+            local ballSpeed = ballVel.Magnitude
+            
+            if ballSpeed < GKV2_MIN_BALL_SPEED then return end
+            
+            -- Check if ball heading to goal
+            if not isBallHeadingToGoal(ball, playerPos) then return end
             
             -- Check if near goal
             if not isPlayerNearGoal(playerPos) then return end
+            
+            local distance = (playerPos - ball.Position).Magnitude
+            if distance > 40 then return end
             
             -- Check cooldown
             local currentTime = tick()
@@ -561,10 +573,10 @@ local DiveToggle = DiveSection:Toggle({
             return
         end
 
-        local DIVE_DISTANCE = 20
-        local DIVE_COOLDOWN = 0.5
-        local PREDICTION_TIME = 0.15
-        local MIN_BALL_SPEED = 5
+        local DIVE_DISTANCE = 25
+        local DIVE_COOLDOWN = 0.45
+        local PREDICTION_TIME = 0.18
+        local MIN_BALL_SPEED = 7
 
         local lastDiveTime = 0
         local leftDiveButton = nil
@@ -599,31 +611,70 @@ local DiveToggle = DiveSection:Toggle({
                 return
             end
             
+            local ballSpeed = ballVel.Magnitude
             local predictedPos = ballPos + ballVel * PREDICTION_TIME
             local playerCFrame = HumanoidRootPart.CFrame
             local localBallPos = playerCFrame:PointToObjectSpace(predictedPos)
             
             local dirX = localBallPos.X
             local dirY = localBallPos.Y
-            local speed = ballVel.Magnitude
+            local distFromPlayer = (HumanoidRootPart.Position - predictedPos).Magnitude
             
-            if dirY > 5 and speed > 15 then
-                if dirX < -2 then
-                    clickButton(leftDiveButton)
-                elseif dirX > 2 then
-                    clickButton(rightDiveButton)
-                else
+            -- Увеличиваем чувствительность для быстрых мячей
+            if ballSpeed > 20 then
+                -- Очень быстрый мяч - агрессивная реакция
+                if dirY > 3 then
+                    if dirX < -1 then
+                        clickButton(leftDiveButton)
+                    elseif dirX > 1 then
+                        clickButton(rightDiveButton)
+                    else
+                        clickButton(jumpButton)
+                    end
+                elseif dirY < -2 then
                     clickButton(jumpButton)
+                else
+                    if dirX < -0.5 then
+                        clickButton(leftDiveButton)
+                    elseif dirX > 0.5 then
+                        clickButton(rightDiveButton)
+                    else
+                        clickButton(jumpButton)
+                    end
                 end
-            elseif dirY < -1 then
-                clickButton(jumpButton)
-            else
-                if dirX < -1.5 then
-                    clickButton(leftDiveButton)
-                elseif dirX > 1.5 then
-                    clickButton(rightDiveButton)
-                else
+            elseif ballSpeed > 12 then
+                -- Средняя скорость
+                if dirY > 4 then
+                    if dirX < -2 then
+                        clickButton(leftDiveButton)
+                    elseif dirX > 2 then
+                        clickButton(rightDiveButton)
+                    else
+                        clickButton(jumpButton)
+                    end
+                elseif dirY < -1 then
                     clickButton(jumpButton)
+                else
+                    if dirX < -1.5 then
+                        clickButton(leftDiveButton)
+                    elseif dirX > 1.5 then
+                        clickButton(rightDiveButton)
+                    else
+                        clickButton(jumpButton)
+                    end
+                end
+            else
+                -- Медленный мяч - точные движения
+                if dirY > 5 then
+                    clickButton(jumpButton)
+                else
+                    if dirX < -1 then
+                        clickButton(leftDiveButton)
+                    elseif dirX > 1 then
+                        clickButton(rightDiveButton)
+                    else
+                        clickButton(jumpButton)
+                    end
                 end
             end
             
@@ -642,7 +693,7 @@ local DiveToggle = DiveSection:Toggle({
             
             local distance = (HumanoidRootPart.Position - ballPos).Magnitude
             
-            if distance <= DIVE_DISTANCE and distance > 0 then
+            if distance <= DIVE_DISTANCE and distance > 1 then
                 smartDive(ballPos, ballVel)
             end
         end)
