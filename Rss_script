@@ -121,20 +121,23 @@ local function CreateHitbox()
     Glow.Parent = RSSHitbox
 end
 
+local CachedGlow = nil
 local function UpdateHitbox()
     if not RSSHitbox then return end
     
     RSSHitbox.Size = HitboxSize
-    local Glow = RSSHitbox:FindFirstChild("Glow")
-    if Glow then 
-        Glow.Size = HitboxSize * 1
+    if not CachedGlow then
+        CachedGlow = RSSHitbox:FindFirstChild("Glow")
+    end
+    if CachedGlow then 
+        CachedGlow.Size = HitboxSize
     end
 
     local shouldShow = IsReachEnabled and IsVisualizerEnabled
     
     RSSHitbox.Transparency = shouldShow and 0.8 or 1
-    if Glow then 
-        Glow.Transparency = shouldShow and 0.7 or 1
+    if CachedGlow then 
+        CachedGlow.Transparency = shouldShow and 0.7 or 1
     end
 end
 
@@ -142,10 +145,19 @@ local function GetRoot()
     return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 end
 
+local BallCacheTTL = 0.5
+local LastBallCheckTime = 0
+
 local function FindBall()
     if Ball and Ball.Parent and Ball:IsA("BasePart") then
         return Ball
     end
+    
+    local now = tick()
+    if Ball and now - LastBallCheckTime < BallCacheTTL then
+        return nil
+    end
+    LastBallCheckTime = now
 
     local b = Workspace:FindFirstChild("ball")
         or Workspace:FindFirstChild("TPS")
@@ -189,8 +201,12 @@ local function ReachLoop()
     if not root or not RSSHitbox then return end
 
     RSSHitbox.Adornee = root
-    local Glow = RSSHitbox:FindFirstChild("Glow")
-    if Glow then Glow.Adornee = root end
+    if not CachedGlow then
+        CachedGlow = RSSHitbox:FindFirstChild("Glow")
+    end
+    if CachedGlow and CachedGlow.Parent then 
+        CachedGlow.Adornee = root 
+    end
 
     local ball = FindBall()
     if not ball then return end
@@ -202,13 +218,14 @@ local function ReachLoop()
     local effectiveReach = (baseReach + dynamicBonus) * ReachDistance
 
     local predictedPos = ball.Position + velocity * ReachPredictionTime
-
+    local distSq = (predictedPos - root.Position).Magnitude
+    
     local now = tick()
     if now - lastReachTouch < ReachTouchCooldown then
         return
     end
 
-    if (predictedPos - root.Position).Magnitude <= effectiveReach then
+    if distSq <= effectiveReach then
         if typeof(firetouchinterest) == "function" then
             if #CachedTouchParts == 0 then
                 RefreshTouchParts()
@@ -237,6 +254,7 @@ local function DisableReach()
         ReachConnection = nil 
     end
     IsReachEnabled = false
+    CachedGlow = nil
     UpdateHitbox()
 end
 
@@ -260,6 +278,7 @@ end
 SetupStamina()
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(2)
+    CachedGlow = nil
     SetupStamina()
     RefreshTouchParts()
 end)
@@ -417,6 +436,65 @@ MainSection:Toggle({
     end
 })
 
+MainSection:Toggle({
+    Title = "Auto GK V2",
+    Default = SavedAutoGKV2Enabled,
+    Callback = function(v)
+        SetSetting("AutoGKV2", v)
+        if getgenv().AutoGKV2Connection then
+            getgenv().AutoGKV2Connection:Disconnect()
+            getgenv().AutoGKV2Connection = nil
+        end
+        
+        if not v then return end
+        
+        local Players = game:GetService("Players")
+        local RunService = game:GetService("RunService")
+        local Workspace = game:GetService("Workspace")
+        local LocalPlayer = Players.LocalPlayer
+        local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+        local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+        
+        local GK_DIVE_COOLDOWN = 0.6
+        local lastDiveTimeV2 = 0
+        
+        local function performDiveV2(direction)
+            local currentTime = tick()
+            if currentTime - lastDiveTimeV2 < GK_DIVE_COOLDOWN then return end
+            
+            if direction == "Space" then
+                FireDiveRemote("Center")
+            elseif direction == "E" then
+                FireDiveRemote("Right")
+            elseif direction == "Q" then
+                FireDiveRemote("Left")
+            elseif direction == "X" then
+                FireDiveRemote("Center")
+            elseif direction == "E+Space" then
+                FireDiveRemote("Right")
+            elseif direction == "Q+Space" then
+                FireDiveRemote("Left")
+            elseif direction == "X+Space" then
+                FireDiveRemote("Center")
+            end
+            lastDiveTimeV2 = currentTime
+        end
+        
+        getgenv().AutoGKV2Connection = RunService.Heartbeat:Connect(function()
+            local ball = Workspace:FindFirstChild("ball") or Workspace:FindFirstChild("TPS") or Workspace:FindFirstChild("PSoccerBall")
+            if not ball then return end
+            
+            local playerPos = HumanoidRootPart.Position
+            
+            if not shouldDiveV2(ball, playerPos) then return end
+            if not isPlayerNearGoal(playerPos, "4v4") then return end
+            
+            local diveDir = calculateDiveDirectionV2(ball, HumanoidRootPart.CFrame)
+            performDiveV2(diveDir)
+        end)
+    end
+})
+
 MainTab:Space()
 
 local SizeSection = MainTab:Section({
@@ -515,10 +593,6 @@ local GkTab = Window:Tab({
     Icon = "rbxassetid://10734950020"
 })
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LocalPlayer = Players.LocalPlayer
-
 local function isInFansTeam()
     return LocalPlayer.Team and LocalPlayer.Team.Name == "Fans"
 end
@@ -564,6 +638,88 @@ AutoPickSection:Dropdown({
         end
     end
 })
+
+-- Auto GK V2 Variables
+local SavedAutoGKV2Enabled = GetSetting("AutoGKV2", false)
+local GK_NEAR_GOAL_DISTANCE_4v4 = 25
+local GK_NEAR_GOAL_DISTANCE_7v7 = 40
+local MIN_BALL_SPEED_GK = 8
+local GK_REACTION_DELAY = 0.05
+local lastGKDiveTime = 0
+
+local function isBallHeadingToGoal(ball, goalPosition)
+    if not ball then return false end
+    local ballVel = ball.AssemblyLinearVelocity
+    local ballToGoal = (goalPosition - ball.Position)
+    
+    if ballVel.Magnitude < MIN_BALL_SPEED_GK then return false end
+    
+    local dotProduct = ballVel:Dot(ballToGoal)
+    return dotProduct > 0
+end
+
+local function isPlayerNearGoal(playerPos, gameMode)
+    if not playerPos then return false end
+    local goalPos = Vector3.new(0, 5, 60) -- Goal position approximate
+    local distance = (playerPos - goalPos).Magnitude
+    
+    if gameMode == "7v7" then
+        return distance <= GK_NEAR_GOAL_DISTANCE_7v7
+    else
+        return distance <= GK_NEAR_GOAL_DISTANCE_4v4
+    end
+end
+
+local function shouldDiveV2(ball, playerPos)
+    if not ball or not playerPos then return false end
+    
+    local velocity = ball.AssemblyLinearVelocity
+    local speed = velocity.Magnitude
+    
+    if speed < MIN_BALL_SPEED_GK then return false end
+    if not isBallHeadingToGoal(ball, playerPos) then return false end
+    
+    local distance = (ball.Position - playerPos).Magnitude
+    return distance <= 30
+end
+
+local function calculateDiveDirectionV2(ball, playerCFrame)
+    if not ball or not playerCFrame then return "Space" end
+    
+    local playerPos = playerCFrame.Position
+    local ballPos = ball.Position
+    local ballVel = ball.AssemblyLinearVelocity
+    
+    -- Predict ball position
+    local predictedPos = ballPos + ballVel * 0.2
+    local localBallPos = playerCFrame:PointToObjectSpace(predictedPos)
+    
+    local directionX = localBallPos.X
+    local directionY = localBallPos.Y
+    local directionZ = localBallPos.Z
+    
+    -- Determine jump type based on ball position
+    if directionY > 3 then
+        -- High ball
+        if math.abs(directionX) > 2 then
+            return directionX < 0 and "Q+Space" or "E+Space"
+        else
+            return "X+Space"
+        end
+    elseif directionY < -2 then
+        -- Low ball
+        return "X"
+    else
+        -- Medium height
+        if directionX < -2 then
+            return "Q"
+        elseif directionX > 2 then
+            return "E"
+        else
+            return "Space"
+        end
+    end
+end
 
 local LegacyDiveSection = GkTab:Section({
         Title = "Auto Dive"
@@ -690,6 +846,113 @@ local DiveToggle = DiveSection:Toggle({
                 autoDive(predictedPosition, effectiveDiveDistance - distance)
             end
         end)
+    end
+})
+
+local AutoGKV2Section = GkTab:Section({
+    Title = "Auto GK V2 (Advanced)"
+})
+
+AutoGKV2Section:Toggle({
+    Title = "Enable Auto GK V2",
+    Desc = "Advanced GK with smart dive direction",
+    Default = SavedAutoGKV2Enabled,
+    Callback = function(enabled)
+        SetSetting("AutoGKV2", enabled)
+        
+        if getgenv().AutoGKV2Connection then
+            getgenv().AutoGKV2Connection:Disconnect()
+            getgenv().AutoGKV2Connection = nil
+        end
+        
+        if not enabled then return end
+        
+        local Players = game:GetService("Players")
+        local RunService = game:GetService("RunService")
+        local LocalPlayer = Players.LocalPlayer
+        local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+        local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+        
+        local GK_DIVE_COOLDOWN = 0.6
+        local lastDiveTimeV2 = 0
+        
+        local function performDiveV2(direction)
+            local currentTime = tick()
+            if currentTime - lastDiveTimeV2 < GK_DIVE_COOLDOWN then return end
+            
+            if direction == "Space" then
+                FireDiveRemote("Center")
+            elseif direction == "E" then
+                FireDiveRemote("Right")
+            elseif direction == "Q" then
+                FireDiveRemote("Left")
+            elseif direction == "X" then
+                -- Low dive (hold X)
+                FireDiveRemote("Center")
+            elseif direction == "E+Space" then
+                FireDiveRemote("Right")
+            elseif direction == "Q+Space" then
+                FireDiveRemote("Left")
+            elseif direction == "X+Space" then
+                FireDiveRemote("Center")
+            end
+            lastDiveTimeV2 = currentTime
+        end
+        
+        getgenv().AutoGKV2Connection = RunService.Heartbeat:Connect(function()
+            local ball = Workspace:FindFirstChild("ball") or Workspace:FindFirstChild("TPS") or Workspace:FindFirstChild("PSoccerBall")
+            if not ball then return end
+            
+            local playerPos = HumanoidRootPart.Position
+            
+            if not shouldDiveV2(ball, playerPos) then return end
+            if not isPlayerNearGoal(playerPos, "4v4") then return end
+            
+            local diveDir = calculateDiveDirectionV2(ball, HumanoidRootPart.CFrame)
+            performDiveV2(diveDir)
+        end)
+    end
+})
+
+AutoGKV2Section:Slider({
+    Title = "GK Reaction Time",
+    Step = 0.01,
+    Value = {
+        Min = 0,
+        Max = 0.3,
+        Default = GK_REACTION_DELAY,
+    },
+    Callback = function(v)
+        GK_REACTION_DELAY = v
+        SetSetting("GKReactionTime", v)
+    end
+})
+
+AutoGKV2Section:Slider({
+    Title = "Min Ball Speed",
+    Step = 0.5,
+    Value = {
+        Min = 3,
+        Max = 20,
+        Default = MIN_BALL_SPEED_GK,
+    },
+    Callback = function(v)
+        MIN_BALL_SPEED_GK = v
+        SetSetting("GKMinBallSpeed", v)
+    end
+})
+
+AutoGKV2Section:Slider({
+    Title = "Near Goal Distance",
+    Step = 1,
+    Value = {
+        Min = 10,
+        Max = 50,
+        Default = GK_NEAR_GOAL_DISTANCE_4v4,
+    },
+    Callback = function(v)
+        GK_NEAR_GOAL_DISTANCE_4v4 = v
+        SetSetting("GKNearGoalDistance", v)
     end
 })
 
@@ -995,7 +1258,7 @@ PredictSection:Toggle({
                 predictionConnection = nil
             end
             
-            if curveFolder then
+            if curveFolder and curveFolder.Parent then
                 curveFolder:Destroy()
                 curveFolder = nil
             end
