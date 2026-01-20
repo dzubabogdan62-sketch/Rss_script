@@ -977,34 +977,59 @@ local savedStates = {}
 local wasPredictorEnabled = false
 
 local function disableEffects()
-    savedStates = {particles = {}, trails = {}, beams = {}, lights = {}, others = {}}
-    -- Optimization: Use a larger batch size to reduce freeze time
-    local count = 0
+    savedStates = {
+        particles = {}, 
+        trails = {}, 
+        beams = {}, 
+        lights = {}, 
+        others = {}, 
+        decals = {}, 
+        shadows = {},
+        connections = {}
+    }
+
+    local function processObj(obj)
+        pcall(function()
+            if obj:IsA("ParticleEmitter") then
+                savedStates.particles[obj] = obj.Enabled
+                obj.Enabled = false
+            elseif obj:IsA("Trail") then
+                savedStates.trails[obj] = obj.Enabled
+                obj.Enabled = false
+            elseif obj:IsA("Beam") then
+                savedStates.beams[obj] = obj.Enabled
+                obj.Enabled = false
+            elseif obj:IsA("Light") then
+                savedStates.lights[obj] = obj.Enabled
+                obj.Enabled = false
+            elseif obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+                savedStates.others[obj] = obj.Enabled
+                obj.Enabled = false
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                savedStates.decals[obj] = obj.Transparency
+                obj.Transparency = 1
+            elseif obj:IsA("BasePart") and obj.CastShadow then
+                savedStates.shadows[obj] = true
+                obj.CastShadow = false
+            end
+        end)
+    end
+
+    -- Real-time optimization for new objects
+    table.insert(savedStates.connections, Workspace.DescendantAdded:Connect(function(obj)
+        task.wait() -- Allow properties to initialize
+        processObj(obj)
+    end))
+    
+    -- Batch process existing objects with time budget
     local descendants = Workspace:GetDescendants()
+    local nextYield = os.clock() + 0.03 -- 30ms budget
     
     for _, obj in ipairs(descendants) do
-        count = count + 1
-        if count % 1000 == 0 then task.wait() end -- Process 1000 items per frame
-
-        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Light") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
-            pcall(function()
-                if obj:IsA("ParticleEmitter") then
-                    savedStates.particles[obj] = obj.Enabled
-                    obj.Enabled = false
-                elseif obj:IsA("Trail") then
-                    savedStates.trails[obj] = obj.Enabled
-                    obj.Enabled = false
-                elseif obj:IsA("Beam") then
-                    savedStates.beams[obj] = obj.Enabled
-                    obj.Enabled = false
-                elseif obj:IsA("Light") then
-                    savedStates.lights[obj] = obj.Enabled
-                    obj.Enabled = false
-                elseif obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
-                    savedStates.others[obj] = obj.Enabled
-                    obj.Enabled = false
-                end
-            end)
+        processObj(obj)
+        if os.clock() > nextYield then
+            task.wait()
+            nextYield = os.clock() + 0.03
         end
     end
     
@@ -1022,11 +1047,28 @@ local function disableEffects()
 end
 
 local function restoreEffects()
-    for obj, state in pairs(savedStates.particles or {}) do pcall(function() obj.Enabled = state end) end
-    for obj, state in pairs(savedStates.trails or {}) do pcall(function() obj.Enabled = state end) end
-    for obj, state in pairs(savedStates.beams or {}) do pcall(function() obj.Enabled = state end) end
-    for obj, state in pairs(savedStates.lights or {}) do pcall(function() obj.Enabled = state end) end
-    for obj, state in pairs(savedStates.others or {}) do pcall(function() obj.Enabled = state end) end
+    if savedStates.connections then
+        for _, conn in ipairs(savedStates.connections) do conn:Disconnect() end
+    end
+
+    -- Helper to restore in batches
+    local function batchRestore(tableData, restoreFunc)
+        local count = 0
+        for obj, val in pairs(tableData or {}) do
+            pcall(function() restoreFunc(obj, val) end)
+            count = count + 1
+            if count % 500 == 0 then task.wait() end
+        end
+    end
+
+    batchRestore(savedStates.particles, function(o, v) o.Enabled = v end)
+    batchRestore(savedStates.trails, function(o, v) o.Enabled = v end)
+    batchRestore(savedStates.beams, function(o, v) o.Enabled = v end)
+    batchRestore(savedStates.lights, function(o, v) o.Enabled = v end)
+    batchRestore(savedStates.others, function(o, v) o.Enabled = v end)
+    batchRestore(savedStates.decals, function(o, v) o.Transparency = v end)
+    batchRestore(savedStates.shadows, function(o, v) o.CastShadow = true end)
+
     if savedStates.lighting then
         pcall(function()
             local Lighting = game:GetService("Lighting")
