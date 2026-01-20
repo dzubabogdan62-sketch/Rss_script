@@ -3,14 +3,13 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
 -- ===== CONFIGURATION =====
 local ReachDistance = 1
 local IsReachEnabled = false
 local IsVisualizerEnabled = false
-local HitboxSize = Vector3.new(10, 10, 10)
+local HitboxSize = Vector3.new(15, 15, 15)
 local ReachConnection = nil
 local RSSHitbox = nil
 
@@ -44,23 +43,6 @@ end
 
 local function TryJump(direction)
     direction = direction or "Center"
-    
-    -- ПК: VirtualInputManager (Эмуляция клавиш)
-    pcall(function()
-        if direction == "Center" or direction == "Upper" or direction == "Low" then
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-            task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-        elseif direction == "Left" or direction == "UpperLeft" then
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game)
-            task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game)
-        elseif direction == "Right" or direction == "UpperRight" then
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end
-    end)
     
     -- Мобайл: Touch кнопки
     pcall(function()
@@ -173,6 +155,12 @@ local function ReachLoop()
         LocalPlayer.Character:FindFirstChild("RightLowerLeg"),
         LocalPlayer.Character:FindFirstChild("LeftFoot"),
         LocalPlayer.Character:FindFirstChild("RightFoot"),
+        LocalPlayer.Character:FindFirstChild("LeftUpperArm"),
+        LocalPlayer.Character:FindFirstChild("RightUpperArm"),
+        LocalPlayer.Character:FindFirstChild("LeftLowerArm"),
+        LocalPlayer.Character:FindFirstChild("RightLowerArm"),
+        LocalPlayer.Character:FindFirstChild("LeftHand"),
+        LocalPlayer.Character:FindFirstChild("RightHand"),
     }
 
     local effectiveReach = math.max(HitboxSize.X, HitboxSize.Y, HitboxSize.Z) / 2
@@ -234,9 +222,9 @@ end)
 local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/dist/main.lua"))()
 
 local Window = WindUI:CreateWindow({
-    Title = "RSS - VETA (Fixed)",
+    Title = "⚽ RSS MOBILE GK",
     Icon = "rbxassetid://106211849494703",
-    Author = "Made By VETA",
+    Author = "Optimized for Mobile",
     Folder = "RSSVETA",
 })
 
@@ -261,7 +249,7 @@ MainSection:Toggle({
 })
 
 MainTab:Space()
-local SizeSection = MainTab:Section({ Title = "Hitbox Size (X/Y/Z)" })
+local SizeSection = MainTab:Section({ Title = "Reach Hitbox Size (X/Y/Z)" })
 
 local function UpdateHitboxSize(axis, value)
     if axis == "X" then HitboxSize = Vector3.new(value, HitboxSize.Y, HitboxSize.Z)
@@ -271,9 +259,9 @@ local function UpdateHitboxSize(axis, value)
     UpdateHitbox()
 end
 
-SizeSection:Slider({ Title = "Size X", Step = 1, Value = {Min = 1, Max = 50, Default = 10}, Callback = function(v) UpdateHitboxSize("X", v) end })
-SizeSection:Slider({ Title = "Size Y", Step = 1, Value = {Min = 1, Max = 50, Default = 10}, Callback = function(v) UpdateHitboxSize("Y", v) end })
-SizeSection:Slider({ Title = "Size Z", Step = 1, Value = {Min = 1, Max = 50, Default = 10}, Callback = function(v) UpdateHitboxSize("Z", v) end })
+SizeSection:Slider({ Title = "Size X", Step = 1, Value = {Min = 1, Max = 60, Default = 15}, Callback = function(v) UpdateHitboxSize("X", v) end })
+SizeSection:Slider({ Title = "Size Y", Step = 1, Value = {Min = 1, Max = 60, Default = 15}, Callback = function(v) UpdateHitboxSize("Y", v) end })
+SizeSection:Slider({ Title = "Size Z", Step = 1, Value = {Min = 1, Max = 60, Default = 15}, Callback = function(v) UpdateHitboxSize("Z", v) end })
 
 -- ===== GK FEATURES =====
 local GkTab = Window:Tab({ Title = "GK Features", Icon = "rbxassetid://10734950020" })
@@ -292,23 +280,49 @@ AutoPickSection:Dropdown({
         end
         local teamColor = (option == "Home GK") and BrickColor.new(23) or BrickColor.new(141)
         ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("TeamChange"):FireServer(teamColor, "Goalie")
+        WindUI:Notify({Title = "Success", Icon = "check", Content = "Changed to " .. option, Duration = 2})
     end
 })
+
+local StatsSection = GkTab:Section({ Title = "GK Stats" })
+StatsSection:Label("Stats refresh each second")
+
+local function UpdateStats()
+    local Character = LocalPlayer.Character
+    if not Character then return end
+    local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+    if not HumanoidRootPart then return end
+    
+    local ball = GetActiveBall()
+    local ballDist = ball and math.floor((HumanoidRootPart.Position - ball.Position).Magnitude) or 0
+    local ballSpeed = ball and math.floor(ball.AssemblyLinearVelocity.Magnitude * 10) / 10 or 0
+    
+    StatsSection:Label("Distance to Ball: " .. ballDist .. " studs")
+    StatsSection:Label("Ball Speed: " .. ballSpeed .. " m/s")
+    StatsSection:Label("Mode: " .. (GKV2_ENABLED and "V2 (Smart)" or (V1_ENABLED and "V1 (Simple)" or "OFF")))
+end
+
+task.spawn(function()
+    while true do
+        UpdateStats()
+        task.wait(1)
+    end
+end)
 
 -- GK Variables
 local GKV2_ENABLED = false
 local V1_ENABLED = false
-local GKV2_MIN_BALL_SPEED = 8
-local GKV2_NEAR_GOAL_DISTANCE_4v4 = 25
-local GKV2_NEAR_GOAL_DISTANCE_7v7 = 45
-local GKV2_DIVE_COOLDOWN = 0.5
-local GKV2_DETECTION_DISTANCE = 40
+local GKV2_MIN_BALL_SPEED = 4
+local GKV2_NEAR_GOAL_DISTANCE_4v4 = 35
+local GKV2_NEAR_GOAL_DISTANCE_7v7 = 55
+local GKV2_DIVE_COOLDOWN = 0.25
+local GKV2_DETECTION_DISTANCE = 55
 local GK_GOAL_Z_POSITION = -150
 
-local DIVE_DISTANCE_REGULAR = 25
-local DIVE_COOLDOWN_REGULAR = 0.5
-local PREDICTION_TIME_REGULAR = 0.18
-local MIN_BALL_SPEED_REGULAR = 7
+local DIVE_DISTANCE_REGULAR = 35
+local DIVE_COOLDOWN_REGULAR = 0.25
+local PREDICTION_TIME_REGULAR = 0.25
+local MIN_BALL_SPEED_REGULAR = 3
 
 local GKV2LastDive = 0
 local V1LastDive = 0
@@ -321,7 +335,7 @@ local function isBallHeadingToGoal(ball, playerPos)
     if ballSpeed < GKV2_MIN_BALL_SPEED then return false end
     
     local ballToGoal = (Vector3.new(playerPos.X, playerPos.Y, GK_GOAL_Z_POSITION) - ball.Position)
-    return ballVel:Dot(ballToGoal.Unit) > ballSpeed * 0.25
+    return ballVel:Dot(ballToGoal.Unit) > ballSpeed * 0.15
 end
 
 local function isPlayerNearGoal(playerPos)
@@ -336,21 +350,22 @@ local function calculateDiveDirection(ball, playerCFrame)
     local ballVel = ball.AssemblyLinearVelocity
     local ballSpeed = ballVel.Magnitude
     
-    local predictionTime = math.clamp(0.1 + (ballSpeed / 100), 0.1, 0.3)
+    local predictionTime = math.clamp(0.08 + (ballSpeed / 70), 0.08, 0.4)
     local predictedPos = ballPos + ballVel * predictionTime
     local localBallPos = playerCFrame:PointToObjectSpace(predictedPos)
     
     local dirX = localBallPos.X
     local dirY = localBallPos.Y
     
-    local highThreshold = ballSpeed > 20 and 3 or 4
-    local sideThreshold = ballSpeed > 20 and 1.5 or 2.5
+    -- Максимальная чувствительность для мобила
+    local highThreshold = ballSpeed > 20 and 2 or (ballSpeed > 15 and 2.8 or 3.5)
+    local sideThreshold = ballSpeed > 20 and 0.8 or (ballSpeed > 15 and 1.2 or 1.8)
     
     if dirY > highThreshold then
         if dirX < -sideThreshold then return "UpperLeft"
         elseif dirX > sideThreshold then return "UpperRight"
         else return "Upper" end
-    elseif dirY < -1 then
+    elseif dirY < 0 then
         return "Low"
     else
         if dirX < -sideThreshold then return "Left"
@@ -361,11 +376,21 @@ end
 
 -- GK UI Sections
 local DetectionSection = GkTab:Section({ Title = "Settings" })
-DetectionSection:Slider({ Title = "Ball Detection (V1)", Step = 1, Value = {Min = 15, Max = 40, Default = 25}, Callback = function(v) DIVE_DISTANCE_REGULAR = v end })
-DetectionSection:Slider({ Title = "Ball Detection (V2)", Step = 1, Value = {Min = 20, Max = 60, Default = 40}, Callback = function(v) GKV2_DETECTION_DISTANCE = v end })
-DetectionSection:Slider({ Title = "Cooldown", Step = 0.05, Value = {Min = 0.3, Max = 1.0, Default = 0.45}, Callback = function(v) DIVE_COOLDOWN_REGULAR = v; GKV2_DIVE_COOLDOWN = v end })
+DetectionSection:Slider({ Title = "Detection Range V1", Step = 1, Value = {Min = 20, Max = 50, Default = 30}, Callback = function(v) DIVE_DISTANCE_REGULAR = v end })
+DetectionSection:Slider({ Title = "Detection Range V2", Step = 1, Value = {Min = 25, Max = 60, Default = 45}, Callback = function(v) GKV2_DETECTION_DISTANCE = v end })
+DetectionSection:Slider({ Title = "Min Ball Speed V1", Step = 0.5, Value = {Min = 3, Max = 12, Default = 5}, Callback = function(v) MIN_BALL_SPEED_REGULAR = v end })
+DetectionSection:Slider({ Title = "Min Ball Speed V2", Step = 0.5, Value = {Min = 3, Max = 12, Default = 6}, Callback = function(v) GKV2_MIN_BALL_SPEED = v end })
+DetectionSection:Slider({ Title = "Dive Cooldown", Step = 0.05, Value = {Min = 0.2, Max = 1.0, Default = 0.4}, Callback = function(v) DIVE_COOLDOWN_REGULAR = v; GKV2_DIVE_COOLDOWN = v end })
+
+local TuningSection = GkTab:Section({ Title = "Fine Tuning" })
+TuningSection:Slider({ Title = "Prediction Time V1", Step = 0.02, Value = {Min = 0.1, Max = 0.4, Default = 0.25}, Callback = function(v) PREDICTION_TIME_REGULAR = v end })
+TuningSection:Slider({ Title = "Goal Distance 4v4", Step = 1, Value = {Min = 15, Max = 40, Default = 35}, Callback = function(v) GKV2_NEAR_GOAL_DISTANCE_4v4 = v end })
+TuningSection:Slider({ Title = "Goal Distance 7v7", Step = 1, Value = {Min = 30, Max = 60, Default = 55}, Callback = function(v) GKV2_NEAR_GOAL_DISTANCE_7v7 = v end })
+TuningSection:Slider({ Title = "Reaction Speed", Step = 0.02, Value = {Min = 0.15, Max = 0.6, Default = 0.25}, Callback = function(v) DIVE_COOLDOWN_REGULAR = v; GKV2_DIVE_COOLDOWN = v end })
 
 local GKV2Section = GkTab:Section({ Title = "Auto GK V2 (Advanced)" })
+
+local ModeInfo = GKV2Section:Label("Status: Disabled")
 
 -- Toggles with Mutual Exclusion
 local V1_Toggle_Func = nil
@@ -378,12 +403,13 @@ V2_Toggle_Func = GKV2Section:Toggle({
     Callback = function(enabled)
         GKV2_ENABLED = enabled
         V1_ENABLED = false
+        ModeInfo:Update("Status: " .. (enabled and "🟢 V2 ACTIVE" or "⚫ Disabled"))
         
         if getgenv().GKV2_CONNECTION then getgenv().GKV2_CONNECTION:Disconnect() end
         if getgenv().AutoDiveConnection then getgenv().AutoDiveConnection:Disconnect() end
         
         if enabled then
-            WindUI:Notify({Title = "Auto GK V2", Content = "Enabled - V1 disabled", Duration = 2})
+            WindUI:Notify({Title = "✅ Auto GK V2", Content = "Smart Prediction Enabled", Duration = 2})
         else
             return
         end
@@ -412,9 +438,13 @@ V2_Toggle_Func = GKV2Section:Toggle({
             local now = tick()
             if now - GKV2LastDive < GKV2_DIVE_COOLDOWN then return end
             
-            if Humanoid.Health > 0 and Humanoid:GetState() ~= Enum.HumanoidStateType.Freefall then
-                TryJump(calculateDiveDirection(ball, HumanoidRootPart.CFrame))
-                GKV2LastDive = now
+            -- Проверка: персонаж на земле и живой
+            if Humanoid.Health > 0 then
+                local humanoidState = Humanoid:GetState()
+                if humanoidState ~= Enum.HumanoidStateType.Freefall and humanoidState ~= Enum.HumanoidStateType.Flying then
+                    TryJump(calculateDiveDirection(ball, HumanoidRootPart.CFrame))
+                    GKV2LastDive = now
+                end
             end
         end)
     end
@@ -428,12 +458,13 @@ V1_Toggle_Func = DiveSection:Toggle({
     Callback = function(enabled)
         V1_ENABLED = enabled
         GKV2_ENABLED = false
+        ModeInfo:Update("Status: " .. (enabled and "🔵 V1 ACTIVE" or "⚫ Disabled"))
         
         if getgenv().AutoDiveConnection then getgenv().AutoDiveConnection:Disconnect() end
         if getgenv().GKV2_CONNECTION then getgenv().GKV2_CONNECTION:Disconnect() end
         
         if enabled then
-            WindUI:Notify({Title = "Auto Dive V1", Content = "Enabled - V2 disabled", Duration = 2})
+            WindUI:Notify({Title = "✅ Auto Dive V1", Content = "Simple Mode Enabled", Duration = 2})
         else
             return
         end
@@ -457,38 +488,42 @@ V1_Toggle_Func = DiveSection:Toggle({
             if ballSpeed < MIN_BALL_SPEED_REGULAR then return end
             
             local distance = (HumanoidRootPart.Position - ballPos).Magnitude
-            if distance <= DIVE_DISTANCE_REGULAR and distance > 1 then
+            if distance <= DIVE_DISTANCE_REGULAR and distance > 0.5 then
                 local now = tick()
                 if now - V1LastDive >= DIVE_COOLDOWN_REGULAR then
-                    if Humanoid.Health > 0 and Humanoid:GetState() ~= Enum.HumanoidStateType.Freefall then
-                        local predicted = ballPos + ballVel * PREDICTION_TIME_REGULAR
-                        local localPos = HumanoidRootPart.CFrame:PointToObjectSpace(predicted)
-                        local dirX, dirY = localPos.X, localPos.Y
-                        
-                        if ballSpeed > 20 then
-                            if dirY > 3 then
-                                TryJump(dirX < -1 and "Left" or (dirX > 1 and "Right" or "Upper"))
-                            elseif dirY < -2 then
-                                TryJump("Center")
+                    -- Проверка: персонаж на земле и живой
+                    if Humanoid.Health > 0 then
+                        local humanoidState = Humanoid:GetState()
+                        if humanoidState ~= Enum.HumanoidStateType.Freefall and humanoidState ~= Enum.HumanoidStateType.Flying then
+                            local predicted = ballPos + ballVel * PREDICTION_TIME_REGULAR
+                            local localPos = HumanoidRootPart.CFrame:PointToObjectSpace(predicted)
+                            local dirX, dirY = localPos.X, localPos.Y
+                            
+                            if ballSpeed > 20 then
+                                if dirY > 2.5 then
+                                    TryJump(dirX < -1.5 and "Left" or (dirX > 1.5 and "Right" or "Upper"))
+                                elseif dirY < -0.5 then
+                                    TryJump("Center")
+                                else
+                                    TryJump(dirX < -0.8 and "Left" or (dirX > 0.8 and "Right" or "Center"))
+                                end
+                            elseif ballSpeed > 12 then
+                                if dirY > 3.5 then
+                                    TryJump(dirX < -1.8 and "UpperLeft" or (dirX > 1.8 and "UpperRight" or "Upper"))
+                                elseif dirY < 0 then
+                                    TryJump("Center")
+                                else
+                                    TryJump(dirX < -1.2 and "Left" or (dirX > 1.2 and "Right" or "Center"))
+                                end
                             else
-                                TryJump(dirX < -0.5 and "Left" or (dirX > 0.5 and "Right" or "Center"))
+                                if dirY > 4.5 then
+                                    TryJump("Upper")
+                                else
+                                    TryJump(dirX < -1 and "Left" or (dirX > 1 and "Right" or "Center"))
+                                end
                             end
-                        elseif ballSpeed > 12 then
-                            if dirY > 4 then
-                                TryJump(dirX < -2 and "UpperLeft" or (dirX > 2 and "UpperRight" or "Upper"))
-                            elseif dirY < -1 then
-                                TryJump("Center")
-                            else
-                                TryJump(dirX < -1.5 and "Left" or (dirX > 1.5 and "Right" or "Center"))
-                            end
-                        else
-                            if dirY > 5 then
-                                TryJump("Upper")
-                            else
-                                TryJump(dirX < -1 and "Left" or (dirX > 1 and "Right" or "Center"))
-                            end
+                            V1LastDive = now
                         end
-                        V1LastDive = now
                     end
                 end
             end
@@ -575,7 +610,7 @@ CreateHitbox()
 UpdateHitbox()
 
 WindUI:Notify({
-    Title = "RSS Loaded",
+    Title = "⚽ RSS MOBILE",
     Icon = "check",
-    Content = "Cleaned version loaded!"
+    Content = "Optimized Mobile Version Loaded!"
 })
