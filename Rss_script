@@ -68,7 +68,7 @@ local function UpdateHitbox()
         core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     end
 
-    local shouldShow = IsReachEnabled
+    local shouldShow = IsReachEnabled and IsVisualizerEnabled
     if outer then outer.Transparency = shouldShow and 0.5 or 1 end
     if core then core.Transparency = shouldShow and 0.3 or 1 end
 end
