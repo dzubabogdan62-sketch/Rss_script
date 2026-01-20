@@ -3,7 +3,72 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
+
+-- Configuration Management
+local Config = {
+    Reach = {
+        Enabled = false,
+        Visualizer = false,
+        Size = {X = 10, Y = 10, Z = 10}
+    },
+    GK = {
+        Mode = "7v7",
+        CloseDist = 15,
+        FarDist = 35,
+        Lookahead = 2.5,
+        Cooldown = 0.5,
+        AutoDive = false,
+        CurveStrength = 0.5 -- Default curve multiplier
+    },
+    Player = {
+        WalkSpeed = 16,
+        JumpPower = 50,
+        AutoFace = false,
+        AntiRagdoll = false,
+        BallCam = false
+    },
+    Visuals = {
+        PredictionMarker = false,
+        FOV = 70,
+        PositionAssist = false
+    },
+    Optimization = {
+        Enabled = false
+    }
+}
+
+local ConfigFileName = "RSS_VETA_Config.json"
+
+local function SaveConfig()
+    if writefile then
+        pcall(function()
+            writefile(ConfigFileName, HttpService:JSONEncode(Config))
+        end)
+    end
+end
+
+local function LoadConfig()
+    if isfile and isfile(ConfigFileName) then
+        pcall(function()
+            local content = readfile(ConfigFileName)
+            local decoded = HttpService:JSONDecode(content)
+            
+            -- Merge decoded into Config (shallow merge for categories)
+            for cat, data in pairs(decoded) do
+                if Config[cat] then
+                    for k, v in pairs(data) do
+                        Config[cat][k] = v
+                    end
+                end
+            end
+        end)
+        return true
+    end
+    return false
+end
+
 local ReachDistance = 1
 local IsReachEnabled = false
 local IsVisualizerEnabled = false
@@ -17,7 +82,7 @@ getgenv().InfiniteStaminaEnabled = false
 local _CachedBall = nil
 local _CachedGoalBounds = nil
 local _LastBallSearch = 0
-local PlayerGameMode = "7v7" -- режим по умолчанию: 7v7 или 4v4
+local PlayerGameMode = "4v4" -- режим по умолчанию: 7v7 или 4v4
 
 local function CreateHitbox()
     if RSSHitbox then RSSHitbox:Destroy() end
@@ -136,17 +201,19 @@ local function FindBall()
     return nil
 end
 
--- Returns active ball part, position and velocity (if available)
+-- Returns active ball part, position, velocity (linear) and rotVelocity (angular)
 local function GetBallData()
     local b = FindBall()
     if not b then return nil end
     local pos = nil
     local vel = Vector3.new()
+    local rot = Vector3.new()
     pcall(function()
         pos = b.Position
         vel = b.AssemblyLinearVelocity or b.Velocity or Vector3.new()
+        rot = b.AssemblyAngularVelocity or b.RotVelocity or Vector3.new()
     end)
-    return b, pos, vel
+    return b, pos, vel, rot
 end
 
 -- Find goal-related parts and compute an axis-aligned bounding box covering them
@@ -534,8 +601,9 @@ local MainSection = MainTab:Section({
 
 MainSection:Toggle({
     Title = "Enable Reach",
-    Default = false,
+    Default = Config.Reach.Enabled,
     Callback = function(v)
+        Config.Reach.Enabled = v
         if v then
             EnableReach()
         else
@@ -546,8 +614,9 @@ MainSection:Toggle({
 
 MainSection:Toggle({
     Title = "Show Hitbox",
-    Default = false,
+    Default = Config.Reach.Visualizer,
     Callback = function(v)
+        Config.Reach.Visualizer = v
         IsVisualizerEnabled = v
         UpdateHitbox()
     end
@@ -556,8 +625,9 @@ MainSection:Toggle({
 MainSection:Toggle({
     Title = "Performance Optimizer",
     Desc = "Disable particle effects / lights and pause predictor to reduce client lag",
-    Default = false,
+    Default = Config.Optimization.Enabled,
     Callback = function(v)
+        Config.Optimization.Enabled = v
         ApplyOptimizations(v)
     end,
 })
@@ -574,9 +644,10 @@ SizeSection:Slider({
     Value = {
         Min = 1,
         Max = 50,
-        Default = 10,
+        Default = Config.Reach.Size.X,
     },
     Callback = function(v)
+        Config.Reach.Size.X = v
         HitboxSize = Vector3.new(v, HitboxSize.Y, HitboxSize.Z)
         UpdateHitbox()
     end
@@ -588,9 +659,10 @@ SizeSection:Slider({
     Value = {
         Min = 1,
         Max = 50,
-        Default = 10,
+        Default = Config.Reach.Size.Y,
     },
     Callback = function(v)
+        Config.Reach.Size.Y = v
         HitboxSize = Vector3.new(HitboxSize.X, v, HitboxSize.Z)
         UpdateHitbox()
     end
@@ -602,9 +674,10 @@ SizeSection:Slider({
     Value = {
         Min = 1,
         Max = 50,
-        Default = 10,
+        Default = Config.Reach.Size.Z,
     },
     Callback = function(v)
+        Config.Reach.Size.Z = v
         HitboxSize = Vector3.new(HitboxSize.X, HitboxSize.Y, v)
         UpdateHitbox()
     end
@@ -1133,8 +1206,9 @@ local PlayerSection = PlayerTab:Section({
 PlayerSection:Slider({
     Title = "WalkSpeed",
     Step = 1,
-    Value = {Min = 16, Max = 100, Default = 16},
+    Value = {Min = 16, Max = 100, Default = Config.Player.WalkSpeed},
     Callback = function(v)
+        Config.Player.WalkSpeed = v
         local char = LocalPlayer.Character
         if char and char:FindFirstChild("Humanoid") then
             char.Humanoid.WalkSpeed = v
@@ -1145,8 +1219,9 @@ PlayerSection:Slider({
 PlayerSection:Slider({
     Title = "JumpPower",
     Step = 1,
-    Value = {Min = 50, Max = 200, Default = 50},
+    Value = {Min = 50, Max = 200, Default = Config.Player.JumpPower},
     Callback = function(v)
+        Config.Player.JumpPower = v
         local char = LocalPlayer.Character
         if char and char:FindFirstChild("Humanoid") then
             char.Humanoid.UseJumpPower = true
@@ -1155,12 +1230,39 @@ PlayerSection:Slider({
     end
 })
 
+PlayerSection:Toggle({
+    Title = "Auto Face Ball",
+    Desc = "Keeps you facing the ball",
+    Default = Config.Player.AutoFace,
+    Callback = function(v)
+        Config.Player.AutoFace = v
+        if v then
+            local RunService = game:GetService("RunService")
+            getgenv().AutoFaceConnection = RunService.RenderStepped:Connect(function()
+                local ball = FindBall()
+                local root = GetRoot()
+                if ball and root then
+                    -- Only rotate Y axis to avoid tilting
+                    local targetPos = Vector3.new(ball.Position.X, root.Position.Y, ball.Position.Z)
+                    root.CFrame = CFrame.lookAt(root.Position, targetPos)
+                end
+            end)
+        else
+            if getgenv().AutoFaceConnection then
+                getgenv().AutoFaceConnection:Disconnect()
+                getgenv().AutoFaceConnection = nil
+            end
+        end
+    end
+})
+
 local AntiRagdollConn = nil
 PlayerSection:Toggle({
     Title = "Anti-Ragdoll",
     Desc = "Prevents falling/stunning",
-    Default = false,
+    Default = Config.Player.AntiRagdoll,
     Callback = function(v)
+        Config.Player.AntiRagdoll = v
         if v then
             local RunService = game:GetService("RunService")
             AntiRagdollConn = RunService.Stepped:Connect(function()
@@ -1191,8 +1293,9 @@ local BallCamConn = nil
 PlayerSection:Toggle({
     Title = "Ball Camera",
     Desc = "Locks camera to ball",
-    Default = false,
+    Default = Config.Player.BallCam,
     Callback = function(v)
+        Config.Player.BallCam = v
         if v then
             local RunService = game:GetService("RunService")
             BallCamConn = RunService.RenderStepped:Connect(function()
@@ -1257,67 +1360,69 @@ local GKSettings = {
     CloseDist = 15,
     FarDist = 35,
     Lookahead = 2.5,
-    Cooldown = 0.5
+    Cooldown = 0.5,
+    CurveStrength = 0.5
 }
 
 AdvancedGKSection:Slider({
     Title = "Close Distance",
     Step = 1,
-    Value = {Min = 5, Max = 30, Default = 15},
-    Callback = function(v) GKSettings.CloseDist = v end
+    Value = {Min = 5, Max = 30, Default = Config.GK.CloseDist},
+    Callback = function(v) 
+        Config.GK.CloseDist = v
+        GKSettings.CloseDist = v 
+    end
 })
 
 AdvancedGKSection:Slider({
     Title = "Far Distance",
     Step = 1,
-    Value = {Min = 20, Max = 60, Default = 35},
-    Callback = function(v) GKSettings.FarDist = v end
+    Value = {Min = 20, Max = 60, Default = Config.GK.FarDist},
+    Callback = function(v) 
+        Config.GK.FarDist = v
+        GKSettings.FarDist = v 
+    end
 })
 
 AdvancedGKSection:Slider({
     Title = "Lookahead Time",
     Step = 0.1,
-    Value = {Min = 1, Max = 5, Default = 2.5},
-    Callback = function(v) GKSettings.Lookahead = v end
+    Value = {Min = 1, Max = 5, Default = Config.GK.Lookahead},
+    Callback = function(v) 
+        Config.GK.Lookahead = v
+        GKSettings.Lookahead = v 
+    end
 })
 
 AdvancedGKSection:Slider({
     Title = "Dive Cooldown",
     Step = 0.1,
-    Value = {Min = 0.1, Max = 2, Default = 0.5},
-    Callback = function(v) GKSettings.Cooldown = v end
-})
-
-AdvancedGKSection:Toggle({
-    Title = "Auto Face Ball",
-    Desc = "Keeps you facing the ball for easier saves",
-    Default = false,
-    Callback = function(v)
-        if v then
-            local RunService = game:GetService("RunService")
-            getgenv().AutoFaceConnection = RunService.RenderStepped:Connect(function()
-                local ball = FindBall()
-                local root = GetRoot()
-                if ball and root then
-                    -- Only rotate Y axis to avoid tilting
-                    local targetPos = Vector3.new(ball.Position.X, root.Position.Y, ball.Position.Z)
-                    root.CFrame = CFrame.lookAt(root.Position, targetPos)
-                end
-            end)
-        else
-            if getgenv().AutoFaceConnection then
-                getgenv().AutoFaceConnection:Disconnect()
-                getgenv().AutoFaceConnection = nil
-            end
-        end
+    Value = {Min = 0.1, Max = 2, Default = Config.GK.Cooldown},
+    Callback = function(v) 
+        Config.GK.Cooldown = v
+        GKSettings.Cooldown = v 
     end
 })
+
+AdvancedGKSection:Slider({
+    Title = "Curve Prediction (Magnus)",
+    Desc = "Adjusts how much spin affects trajectory prediction",
+    Step = 0.1,
+    Value = {Min = 0, Max = 2, Default = Config.GK.CurveStrength},
+    Callback = function(v) 
+        Config.GK.CurveStrength = v
+        GKSettings.CurveStrength = v 
+    end
+})
+
+
 
 AdvancedGKSection:Toggle({
     Title = "Enable Auto GK V2",
     Desc = "Predicts and dives towards ball landing",
-    Default = false,
+    Default = Config.GK.AutoDive,
     Callback = function(enabled)
+        Config.GK.AutoDive = enabled
         local RunService = game:GetService("RunService")
 
         if getgenv().AutoGKV2Connection then
@@ -1399,20 +1504,38 @@ AdvancedGKSection:Toggle({
             end
         end
 
-        -- Enhanced physics prediction for Auto GK
-        local function predictLanding(pos, vel)
+        -- Enhanced physics prediction for Auto GK (with Magnus Effect)
+        local function predictLanding(pos, vel, rot)
             local g = Vector3.new(0, -196.2, 0)
             local p = pos
             local v = vel
-            -- Physics constants matching the visualizer
+            local w = rot or Vector3.new()
+            
+            -- Physics constants
             local airResistance = 0.99 
             local dt = STEP
             local gravityDt = g * dt
             local airResStep = airResistance ^ dt
-
+            
+            -- Magnus Effect Coefficient
+            -- F_m = S * (w x v)
+            -- S is roughly approximated by CurveStrength setting
+            local curveCoeff = GKSettings.CurveStrength * 0.1 -- Scale down for reasonable game physics
+            
             for t = 0, GKSettings.Lookahead, STEP do
-                v = (v + gravityDt) * airResStep -- Apply drag
+                -- Calculate Magnus acceleration: a = F/m. Assuming mass=1 for simplicity.
+                -- Cross product: Angular Velocity X Linear Velocity
+                local magnusAcc = w:Cross(v) * curveCoeff
+                
+                -- Update velocity with Gravity + Magnus
+                v = v + gravityDt + (magnusAcc * dt)
+                
+                -- Apply drag
+                v = v * airResStep
+                
+                -- Update position
                 p = p + v * dt
+                
                 if p.Y <= 3 then -- near ground
                     return p
                 end
@@ -1420,18 +1543,24 @@ AdvancedGKSection:Toggle({
             return nil
         end
         
-        local function predictHighShot(pos, vel)
+        local function predictHighShot(pos, vel, rot)
              local g = Vector3.new(0, -196.2, 0)
              local p = pos
              local v = vel
+             local w = rot or Vector3.new()
+             
              local airResistance = 0.99
              local dt = STEP
              local gravityDt = g * dt
              local airResStep = airResistance ^ dt
+             local curveCoeff = GKSettings.CurveStrength * 0.1
 
              -- Check peak height within lookahead
              for t = 0, GKSettings.Lookahead, STEP do
-                 v = (v + gravityDt) * airResStep
+                 local magnusAcc = w:Cross(v) * curveCoeff
+                 v = v + gravityDt + (magnusAcc * dt)
+                 v = v * airResStep
+                 
                  p = p + v * dt
                  -- If ball is high (e.g. > 7 studs) and near goal
                  if p.Y > 7 and p.Y < 15 then 
@@ -1447,7 +1576,7 @@ AdvancedGKSection:Toggle({
             if now - lastAutoGKV2Check < 0.05 then return end -- throttle checks to ~20Hz (faster for 7v7)
             lastAutoGKV2Check = now
 
-            local ball, bp, bv = GetBallData()
+            local ball, bp, bv, brot = GetBallData()
             if not ball or not bp then return end
             
             -- If buttons are missing, try to find them once
@@ -1455,18 +1584,29 @@ AdvancedGKSection:Toggle({
                 leftBtn, rightBtn, jumpBtn = findButtonsLocal()
             end
 
-            local landing = predictLanding(bp, bv) or bp
+            local landing = predictLanding(bp, bv, brot) or bp
+            -- NOTE: isBallHeadingToGoal still uses linear check for fast rejection, 
+            -- but we trust the curved prediction 'landing' for final dive decision.
             local heading, landingPos = isBallHeadingToGoal(ball, bv, GKSettings.Lookahead + 0.3)
-            local isHigh, highPos = predictHighShot(bp, bv)
+            local isHigh, highPos = predictHighShot(bp, bv, brot)
             
             local char = LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if not root then return end
 
-            local targetPos = landingPos or landing
-            local dist = (root.Position - targetPos).Magnitude
+            -- If curve prediction differs significantly from linear 'landingPos', prefer curved 'landing'
+            -- We re-check if 'landing' is actually in goal
+            local bounds = findGoalBounds()
+            local isCurvingToGoal = false
+            if bounds and isPointInBounds(landing, bounds) then
+                 isCurvingToGoal = true
+            end
             
-            if heading then
+            -- Combine linear and curved logic: if either says yes
+            if heading or isCurvingToGoal then
+                 local targetPos = isCurvingToGoal and landing or landingPos
+                 local dist = (root.Position - targetPos).Magnitude
+                 
                 -- Ball heading to goal
                 if dist <= GKSettings.FarDist then
                     local now2 = tick()
@@ -1506,15 +1646,16 @@ AdvancedGKSection:Toggle({
     end
 })
 
-local AssistSection = GkTab:Section({ Title = "Position Assist" })
+local AssistSection = GkTab:Section({ Title = "Assists & Visuals" })
 local AssistPart = nil
 local AssistUpdate = nil
 
 AssistSection:Toggle({
     Title = "Enable Position Guide",
     Desc = "Green line shows optimal GK positioning",
-    Default = false,
+    Default = Config.Visuals.PositionAssist,
     Callback = function(v)
+        Config.Visuals.PositionAssist = v
         if v then
             -- Create visual Part (more reliable than Adornment)
             if not AssistPart then
@@ -1640,5 +1781,133 @@ AssistSection:Toggle({
         end
     end
 })
+
+local PredictionMarker = nil
+local PredictionUpdate = nil
+
+AssistSection:Toggle({
+    Title = "Goal Prediction Marker",
+    Desc = "Shows where the ball will enter the goal",
+    Default = Config.Visuals.PredictionMarker,
+    Callback = function(v)
+        Config.Visuals.PredictionMarker = v
+        if v then
+            -- Create marker
+            if not PredictionMarker then
+                PredictionMarker = Instance.new("Part")
+                PredictionMarker.Name = "GKPredictionMarker"
+                PredictionMarker.Shape = Enum.PartType.Ball
+                PredictionMarker.Material = Enum.Material.Neon
+                PredictionMarker.Color = Color3.fromRGB(255, 0, 0) -- Red for danger/action
+                PredictionMarker.Size = Vector3.new(2, 2, 2)
+                PredictionMarker.Anchored = true
+                PredictionMarker.CanCollide = false
+                PredictionMarker.CastShadow = false
+                PredictionMarker.Transparency = 0.5
+                PredictionMarker.Parent = Workspace
+            end
+
+            local RunService = game:GetService("RunService")
+            PredictionUpdate = RunService.RenderStepped:Connect(function()
+                local ball, pos, vel, rot = GetBallData()
+                
+                -- Visualization also needs curve support!
+                -- Reusing logic similar to Auto GK
+                local curveCoeff = (GKSettings.CurveStrength or 0.5) * 0.1
+                local g = Vector3.new(0, -196.2, 0)
+                local p = pos
+                local v = vel
+                local w = rot or Vector3.new()
+                local airResistance = 0.99 
+                local dt = 0.04
+                
+                local found = false
+                local finalPos = nil
+
+                if p and v then
+                    for t = 0, 3.0, dt do
+                        local magnusAcc = w:Cross(v) * curveCoeff
+                        v = v + (g * dt) + (magnusAcc * dt)
+                        v = v * (airResistance ^ dt)
+                        p = p + v * dt
+                        
+                        -- Simple ground check or goal check
+                        local bounds = findGoalBounds()
+                        if bounds and isPointInBounds(p, bounds) then
+                            found = true
+                            finalPos = p
+                            break
+                        end
+                        if p.Y < -50 then break end
+                    end
+                end
+                
+                if found and finalPos then
+                    PredictionMarker.Position = finalPos
+                    PredictionMarker.Transparency = 0.3
+                    -- Pulse effect
+                    local t = tick() * 10
+                    PredictionMarker.Size = Vector3.new(2,2,2) + Vector3.new(0.5,0.5,0.5) * math.sin(t)
+                else
+                    PredictionMarker.Transparency = 1
+                end
+            end)
+        else
+            if PredictionUpdate then PredictionUpdate:Disconnect() PredictionUpdate = nil end
+            if PredictionMarker then PredictionMarker:Destroy() PredictionMarker = nil end
+        end
+    end
+})
+
+AssistSection:Slider({
+    Title = "Field of View",
+    Step = 1,
+    Value = {Min = 70, Max = 120, Default = Config.Visuals.FOV},
+    Callback = function(v)
+        Config.Visuals.FOV = v
+        if Workspace.CurrentCamera then
+            Workspace.CurrentCamera.FieldOfView = v
+        end
+    end
+})
+
+-- Settings Tab
+local SettingsTab = Window:Tab({
+    Title = "Settings",
+    Icon = "settings"
+})
+
+local SettingsSection = SettingsTab:Section({ Title = "Configuration" })
+
+SettingsSection:Button({
+    Title = "Save Config",
+    Desc = "Saves current settings to file",
+    Callback = function()
+        SaveConfig()
+        WindUI:Notify({Title = "Config", Content = "Settings saved to " .. ConfigFileName, Icon = "save"})
+    end
+})
+
+SettingsSection:Button({
+    Title = "Load Config",
+    Desc = "Loads settings from file (requires rejoin/refresh to fully apply)",
+    Callback = function()
+        if LoadConfig() then
+            WindUI:Notify({Title = "Config", Content = "Settings loaded! Restart script to apply.", Icon = "check"})
+        else
+            WindUI:Notify({Title = "Config", Content = "No config file found", Icon = "alert-triangle"})
+        end
+    end
+})
+
+-- Auto-load config on startup
+if LoadConfig() then
+    -- Apply some non-UI critical settings immediately
+    GKSettings.CloseDist = Config.GK.CloseDist
+    GKSettings.FarDist = Config.GK.FarDist
+    GKSettings.Lookahead = Config.GK.Lookahead
+    GKSettings.Cooldown = Config.GK.Cooldown
+    HitboxSize = Vector3.new(Config.Reach.Size.X, Config.Reach.Size.Y, Config.Reach.Size.Z)
+end
 
 Window:SetupWindow()
