@@ -583,481 +583,7 @@ if not WindUI or not WindUI.CreateWindow then
     return
 end
 
-local Window = WindUI:CreateWindow({
-    Title = "RSS - VETA",
-    Icon = "rbxassetid://106211849494703",
-    Author = "Made By VETA",
-    Folder = "RSSVETA",
-})
-
-local MainTab = Window:Tab({
-    Title = "GK & Player Reach",
-    Icon = "target",
-})
-
-local MainSection = MainTab:Section({
-    Title = "Both Reach (Pretty Bad At GK)"
-})
-
-MainSection:Toggle({
-    Title = "Enable Reach",
-    Default = Config.Reach.Enabled,
-    Callback = function(v)
-        Config.Reach.Enabled = v
-        if v then
-            EnableReach()
-        else
-            DisableReach()
-        end
-    end
-})
-
-MainSection:Toggle({
-    Title = "Show Hitbox",
-    Default = Config.Reach.Visualizer,
-    Callback = function(v)
-        Config.Reach.Visualizer = v
-        IsVisualizerEnabled = v
-        UpdateHitbox()
-    end
-})
-
-MainSection:Toggle({
-    Title = "Performance Optimizer",
-    Desc = "Disable particle effects / lights and pause predictor to reduce client lag",
-    Default = Config.Optimization.Enabled,
-    Callback = function(v)
-        Config.Optimization.Enabled = v
-        ApplyOptimizations(v)
-    end,
-})
-
-MainTab:Space()
-
-local SizeSection = MainTab:Section({
-    Title = "Hitbox Size (X/Y/Z)"
-})
-
-SizeSection:Slider({
-    Title = "Size X",
-    Step = 1,
-    Value = {
-        Min = 1,
-        Max = 50,
-        Default = Config.Reach.Size.X,
-    },
-    Callback = function(v)
-        Config.Reach.Size.X = v
-        HitboxSize = Vector3.new(v, HitboxSize.Y, HitboxSize.Z)
-        UpdateHitbox()
-    end
-})
-
-SizeSection:Slider({
-    Title = "Size Y",
-    Step = 1,
-    Value = {
-        Min = 1,
-        Max = 50,
-        Default = Config.Reach.Size.Y,
-    },
-    Callback = function(v)
-        Config.Reach.Size.Y = v
-        HitboxSize = Vector3.new(HitboxSize.X, v, HitboxSize.Z)
-        UpdateHitbox()
-    end
-})
-
-SizeSection:Slider({
-    Title = "Size Z",
-    Step = 1,
-    Value = {
-        Min = 1,
-        Max = 50,
-        Default = Config.Reach.Size.Z,
-    },
-    Callback = function(v)
-        Config.Reach.Size.Z = v
-        HitboxSize = Vector3.new(HitboxSize.X, HitboxSize.Y, v)
-        UpdateHitbox()
-    end
-})
-
-local GkTab = Window:Tab({
-    Title = "GK Features",
-    Icon = "rbxassetid://10734950020"
-})
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LocalPlayer = Players.LocalPlayer
-
-local function isInFansTeam()
-    return LocalPlayer.Team and LocalPlayer.Team.Name == "Fans"
-end
-
-local AutoPickSection = GkTab:Section({
-    Title = "Auto Pick GK"
-})
-
-AutoPickSection:Dropdown({
-    Title = "Game Mode",
-    Desc = "Choose match mode (4v4 or 7v7)",
-    Values = {"4v4", "7v7"},
-    Value = "7v7",
-    Multi = false,
-    Callback = function(mode)
-        PlayerGameMode = mode or "7v7"
-        WindUI:Notify({Title = "Mode", Content = "Set to " .. PlayerGameMode, Icon = "target"})
-    end
-})
-
-AutoPickSection:Dropdown({
-    Title = "Choose Team",
-    Desc = "USE THIS WHEN NO GK IN TEAM",
-    Values = {"Home GK", "Away GK"},
-    Value = nil,
-    Multi = false,
-    AllowNone = true,
-    Callback = function(option)
-        if not option or option == "" then
-            return
-        end
-        
-        if not isInFansTeam() then
-            WindUI:Notify({
-                Title = "Error",
-                Icon = "ban",
-                Content = "You must be in Fans/No Team to use this feature!",
-                Duration = 5,
-            })
-            return
-        end
-        
-        if option == "Home GK" then
-            local args = {
-                BrickColor.new(23),
-                "Goalie"
-            }
-            ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("TeamChange"):FireServer(unpack(args))
-        elseif option == "Away GK" then
-            local args = {
-                BrickColor.new(141),
-                "Goalie"
-            }
-            ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("TeamChange"):FireServer(unpack(args))
-        end
-    end
-})
-
-
-
-local StaminaTab = Window:Tab({
-    Title = "Infinite Stamina",
-    Icon = "zap",
-})
-
-local StaminaSection = StaminaTab:Section({
-    Title = "Infinite Stamina"
-})
-
-StaminaSection:Toggle({
-    Title = "Enable Infinite Stamina",
-    Default = false,
-    Callback = function(v)
-        getgenv().InfiniteStaminaEnabled = v
-        if speeds then
-            speeds.Walk.Value = v and speeds.Run.Value or defaultWalk
-        end
-    end
-})
-
-local PredictTab = Window:Tab({
-    Title = "Ball Predictor",
-    Icon = "circle",
-})
-
-local PredictSection = PredictTab:Section({
-    Title = "Ball Predictor"
-})
-
-local predictionConnection = nil
-local curveFolder = nil
-
-PredictSection:Toggle({
-    Title = "Enable Ball Predictor",
-    Default = false,
-    Callback = function(Value)
-        if Value then
-            local Players = game:GetService("Players")
-            local RunService = game:GetService("RunService")
-            local Workspace = game:GetService("Workspace")
-
-            local config = {
-                gravity = 196.2,
-                bounceDamping = 0.68,
-                groundHeight = 0,
-                minBounceVelocity = 8,
-                airResistance = 0.99,
-                frictionCoefficient = 0.85,
-                spinDecay = 0.95,
-                magnusCoefficient = 0.00015,
-                terminalVelocity = 200,
-                rollingResistance = 0.92,
-                
-                segmentCount = 25,
-                segmentSize = Vector3.new(0.3, 0.3, 2),
-                segmentTransparency = 0.2,
-                maxPredictionTime = 10,
-                minVelocityThreshold = 3,
-                simulationTimestep = 0.033,
-                maxSimulationPoints = 80,
-                updateRate = 3,
-                
-                colorCurve = Color3.fromRGB(0, 255, 0),
-                colorLanding = Color3.fromRGB(0, 255, 0),
-            }
-
-            local vector3Zero = Vector3.zero
-            local vector3Up = Vector3.new(0, 1, 0)
-            local gravityVector = Vector3.new(0, -config.gravity, 0)
-
-            local cachedBall = nil
-            local lastBallCheck = 0
-            local ballCheckInterval = 1
-
-            local function getBall()
-                -- Use the global GetBallData for consistency and caching
-                return GetBallData()
-            end
-
-            curveFolder = Instance.new("Folder")
-            curveFolder.Name = "BallPredictionCurve"
-            curveFolder.Parent = workspace
-
-            local segments = table.create(config.segmentCount)
-            for i = 1, config.segmentCount do
-                local segment = Instance.new("Part")
-                segment.Name = "Segment_" .. i
-                segment.Anchored = true
-                segment.CanCollide = false
-                segment.CastShadow = false
-                segment.Material = Enum.Material.Neon
-                segment.Transparency = config.segmentTransparency
-                segment.Size = config.segmentSize
-                segment.Color = config.colorCurve
-                segment.Parent = curveFolder
-                segments[i] = segment
-            end
-
-            local landingMarker = Instance.new("Part")
-            landingMarker.Name = "LandingMarker"
-            landingMarker.Anchored = true
-            landingMarker.CanCollide = false
-            landingMarker.CastShadow = false
-            landingMarker.Material = Enum.Material.Neon
-            landingMarker.Color = config.colorLanding
-            landingMarker.Transparency = 0.4
-            landingMarker.Size = Vector3.new(4, 0.2, 4)
-            landingMarker.Shape = Enum.PartType.Cylinder
-            landingMarker.Parent = curveFolder
-
-            local landingRing = Instance.new("Part")
-            landingRing.Name = "LandingRing"
-            landingRing.Anchored = true
-            landingRing.CanCollide = false
-            landingRing.CastShadow = false
-            landingRing.Material = Enum.Material.Neon
-            landingRing.Color = config.colorLanding
-            landingRing.Transparency = 0.6
-            landingRing.Size = Vector3.new(6, 0.1, 6)
-            landingRing.Shape = Enum.PartType.Cylinder
-            landingRing.Parent = curveFolder
-
-            local function simulateTrajectory(startPos, startVel)
-                local points = table.create(config.maxSimulationPoints)
-                local dt = config.simulationTimestep
-                local maxTime = config.maxPredictionTime
-                local gravityDt = gravityVector * dt
-                local airResistance = config.airResistance ^ dt
-                
-                local pos = startPos
-                local vel = startVel
-                local time = 0
-                local bounceCount = 0
-                local pointCount = 0
-                
-                while time < maxTime and bounceCount < 8 and pointCount < config.maxSimulationPoints do
-                    time = time + dt
-                    pointCount = pointCount + 1
-                    
-                    vel = (vel + gravityDt) * airResistance
-                    
-                    if vel.Y < -config.terminalVelocity then
-                        vel = Vector3.new(vel.X, -config.terminalVelocity, vel.Z)
-                    end
-                    
-                    pos = pos + vel * dt
-                    
-                    points[pointCount] = {pos, vel, vel.Magnitude}
-                    
-                    if pos.Y <= config.groundHeight and vel.Y < 0 then
-                        pos = Vector3.new(pos.X, config.groundHeight, pos.Z)
-                        
-                        local bounceVelY = -vel.Y * config.bounceDamping
-                        vel = Vector3.new(
-                            vel.X * config.frictionCoefficient,
-                            bounceVelY,
-                            vel.Z * config.frictionCoefficient
-                        )
-                        
-                        bounceCount = bounceCount + 1
-                        
-                        if vel.Magnitude < config.minBounceVelocity then
-                            points[pointCount] = {pos, vector3Zero, 0}
-                            break
-                        end
-                    end
-                    
-                    if pos.Y < -500 or vel.Magnitude < 0.3 then
-                        break
-                    end
-                end
-                
-                return points, pointCount
-            end
-
-            local function findFirstLanding(points, count)
-                for i = 2, count do
-                    local curr = points[i]
-                    local prev = points[i-1]
-                    local currPos, currVel = curr[1], curr[2]
-                    local prevPos, prevVel = prev[1], prev[2]
-                    
-                    if currPos.Y <= config.groundHeight + 0.5 and 
-                       prevPos.Y > config.groundHeight + 0.5 and
-                       currVel.Y < 0 then
-                        
-                        local t = (config.groundHeight - prevPos.Y) / (currPos.Y - prevPos.Y)
-                        t = math.clamp(t, 0, 1)
-                        
-                        return prevPos:Lerp(currPos, t), prevVel:Lerp(currVel, t)
-                    end
-                end
-                return nil, nil
-            end
-
-            local frameCounter = 0
-            local lastTrajectoryPoints = nil
-            local lastPointCount = 0
-            local lastLandingPos = nil
-            local lastLandingVel = nil
-
-            predictionConnection = RunService.Heartbeat:Connect(function()
-                frameCounter = frameCounter + 1
-                
-                if frameCounter % config.updateRate ~= 0 then
-                    return
-                end
-                
-                local ball = getBall()
-                if not ball then
-                    for i = 1, config.segmentCount do
-                        segments[i].Transparency = 1
-                    end
-                    landingMarker.Transparency = 1
-                    landingRing.Transparency = 1
-                    return
-                end
-                
-                local velocity = ball.AssemblyLinearVelocity
-                local speed = velocity.Magnitude
-                
-                if speed < config.minVelocityThreshold then
-                    for i = 1, config.segmentCount do
-                        segments[i].Transparency = 1
-                    end
-                    landingMarker.Transparency = 1
-                    landingRing.Transparency = 1
-                    return
-                end
-                
-                local trajectoryPoints, pointCount = simulateTrajectory(ball.Position, velocity)
-                lastTrajectoryPoints = trajectoryPoints
-                lastPointCount = pointCount
-                
-                if pointCount > 1 then
-                    local segmentStep = (pointCount - 1) / (config.segmentCount - 1)
-                    
-                    for i = 1, config.segmentCount do
-                        local pointIndex = math.floor((i - 1) * segmentStep) + 1
-                        local nextIndex = math.min(pointIndex + 1, pointCount)
-                        
-                        if pointIndex <= pointCount and nextIndex <= pointCount then
-                            local current = trajectoryPoints[pointIndex]
-                            local next = trajectoryPoints[nextIndex]
-                            local currentPos, nextPos = current[1], next[1]
-                            
-                            local midpoint = (currentPos + nextPos) * 0.5
-                            local distance = (nextPos - currentPos).Magnitude
-                            
-                            if distance > 0.01 then
-                                local direction = (nextPos - currentPos) / distance
-                                
-                                segments[i].Size = Vector3.new(0.3, 0.3, distance)
-                                segments[i].CFrame = CFrame.lookAt(midpoint, midpoint + direction)
-                                segments[i].Transparency = config.segmentTransparency
-                            else
-                                segments[i].Transparency = 1
-                            end
-                        else
-                            segments[i].Transparency = 1
-                        end
-                    end
-                else
-                    for i = 1, config.segmentCount do
-                        segments[i].Transparency = 1
-                    end
-                end
-                
-                local landingPos, landingVel = findFirstLanding(trajectoryPoints, pointCount)
-                lastLandingPos = landingPos
-                lastLandingVel = landingVel
-                
-                if landingPos then
-                    local markerPos = landingPos + Vector3.new(0, 0.1, 0)
-                    landingMarker.CFrame = CFrame.new(markerPos) * CFrame.Angles(0, 0, math.pi * 0.5)
-                    landingMarker.Transparency = 0.4
-                    
-                    local ringPos = landingPos + Vector3.new(0, 0.05, 0)
-                    landingRing.CFrame = CFrame.new(ringPos) * CFrame.Angles(0, 0, math.pi * 0.5)
-                    landingRing.Transparency = 0.6
-                    
-                    local pulse = math.sin(tick() * 5) * 0.5 + 0.5
-                    local scale = 6 + pulse
-                    landingRing.Size = Vector3.new(scale, 0.1, scale)
-                else
-                    landingMarker.Transparency = 1
-                    landingRing.Transparency = 1
-                end
-            end)
-        else
-            if predictionConnection then
-                predictionConnection:Disconnect()
-                predictionConnection = nil
-            end
-            
-            if curveFolder then
-                curveFolder:Destroy()
-                curveFolder = nil
-            end
-        end
-    end
-})
-CreateHitbox()
-UpdateHitbox()
-
--- Performance optimization: disable client-side heavy effects and optionally pause predictor/visuals
+-- Helpers for Optimization
 local OptimizationsApplied = false
 local savedStates = {}
 local wasPredictorEnabled = false
@@ -1168,258 +694,91 @@ end
 
 local function ApplyOptimizations(enable)
     if enable and not OptimizationsApplied then
-        -- pause predictor if running
-        if predictionConnection then
-            wasPredictorEnabled = true
-            pcall(function() predictionConnection:Disconnect() end)
-            predictionConnection = nil
-        else
-            wasPredictorEnabled = false
-        end
-
         disableEffects()
-        -- hide heavy visuals
         IsVisualizerEnabled = false
         UpdateHitbox()
         OptimizationsApplied = true
         WindUI:Notify({Title = "Optimizer", Content = "Optimizations applied", Icon = "zap"})
     elseif not enable and OptimizationsApplied then
         restoreEffects()
-        if wasPredictorEnabled then
-            -- user can re-enable predictor via UI toggle; we avoid auto-starting to be safe
-            WindUI:Notify({Title = "Optimizer", Content = "Predictor was running before; re-enable it from UI if needed", Icon = "info"})
-        end
         OptimizationsApplied = false
         WindUI:Notify({Title = "Optimizer", Content = "Optimizations removed", Icon = "check"})
     end
 end
 
-local PlayerTab = Window:Tab({
-    Title = "Player",
-    Icon = "user",
-})
-
-local PlayerSection = PlayerTab:Section({
-    Title = "Movement & Utilities"
-})
-
-PlayerSection:Slider({
-    Title = "WalkSpeed",
-    Step = 1,
-    Value = {Min = 16, Max = 100, Default = Config.Player.WalkSpeed},
-    Callback = function(v)
-        Config.Player.WalkSpeed = v
-        local char = LocalPlayer.Character
-        if char and char:FindFirstChild("Humanoid") then
-            char.Humanoid.WalkSpeed = v
-        end
-    end
-})
-
-PlayerSection:Slider({
-    Title = "JumpPower",
-    Step = 1,
-    Value = {Min = 50, Max = 200, Default = Config.Player.JumpPower},
-    Callback = function(v)
-        Config.Player.JumpPower = v
-        local char = LocalPlayer.Character
-        if char and char:FindFirstChild("Humanoid") then
-            char.Humanoid.UseJumpPower = true
-            char.Humanoid.JumpPower = v
-        end
-    end
-})
-
-PlayerSection:Toggle({
-    Title = "Auto Face Ball",
-    Desc = "Keeps you facing the ball",
-    Default = Config.Player.AutoFace,
-    Callback = function(v)
-        Config.Player.AutoFace = v
-        if v then
-            local RunService = game:GetService("RunService")
-            getgenv().AutoFaceConnection = RunService.RenderStepped:Connect(function()
-                local ball = FindBall()
-                local root = GetRoot()
-                if ball and root then
-                    -- Only rotate Y axis to avoid tilting
-                    local targetPos = Vector3.new(ball.Position.X, root.Position.Y, ball.Position.Z)
-                    root.CFrame = CFrame.lookAt(root.Position, targetPos)
-                end
-            end)
-        else
-            if getgenv().AutoFaceConnection then
-                getgenv().AutoFaceConnection:Disconnect()
-                getgenv().AutoFaceConnection = nil
-            end
-        end
-    end
-})
-
-local AntiRagdollConn = nil
-PlayerSection:Toggle({
-    Title = "Anti-Ragdoll",
-    Desc = "Prevents falling/stunning",
-    Default = Config.Player.AntiRagdoll,
-    Callback = function(v)
-        Config.Player.AntiRagdoll = v
-        if v then
-            local RunService = game:GetService("RunService")
-            AntiRagdollConn = RunService.Stepped:Connect(function()
-                local char = LocalPlayer.Character
-                if char and char:FindFirstChild("Humanoid") then
-                    char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                    char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-                    if char.Humanoid.PlatformStand then
-                        char.Humanoid.PlatformStand = false
-                    end
-                end
-            end)
-        else
-            if AntiRagdollConn then
-                AntiRagdollConn:Disconnect()
-                AntiRagdollConn = nil
-            end
-            local char = LocalPlayer.Character
-            if char and char:FindFirstChild("Humanoid") then
-                char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-                char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-            end
-        end
-    end
-})
-
-local BallCamConn = nil
-PlayerSection:Toggle({
-    Title = "Ball Camera",
-    Desc = "Locks camera to ball",
-    Default = Config.Player.BallCam,
-    Callback = function(v)
-        Config.Player.BallCam = v
-        if v then
-            local RunService = game:GetService("RunService")
-            BallCamConn = RunService.RenderStepped:Connect(function()
-                local ball = FindBall()
-                if ball and Workspace.CurrentCamera then
-                    Workspace.CurrentCamera.CameraSubject = ball
-                end
-            end)
-        else
-            if BallCamConn then
-                BallCamConn:Disconnect()
-                BallCamConn = nil
-            end
-            if Workspace.CurrentCamera and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-                Workspace.CurrentCamera.CameraSubject = LocalPlayer.Character.Humanoid
-            end
-        end
-    end
-})
-
-local Dialog = Window:Dialog({
-    Icon = "bird",
-    Title = "Hey!",
-    Content = "Report To Our Discord If You Found Bugs/Glitches",
-    Buttons = {
-        {
-            Title = "Continue",
-            Callback = function()
-                -- safe noop: CreateMainUI may not be defined in some environments
-                if type(CreateMainUI) == "function" then
-                    pcall(CreateMainUI)
-                end
-            end
-        }
-    }
-})
-
--- Ensure CreateMainUI exists (some dialogs call it)
-function CreateMainUI()
-    -- intentionally minimal: if the real WindUI window init is elsewhere, this won't interfere
-    pcall(function()
-        WindUI:Notify({
-            Title = "UI",
-            Icon = "check",
-            Content = "Main UI initialized",
-            Duration = 2,
-        })
-    end)
+local function isInFansTeam()
+    return LocalPlayer.Team and LocalPlayer.Team.Name == "Fans"
 end
 
-WindUI:Notify({
-    Title = "RSS Loaded",
-    Icon = "check",
-    Content = "RSS VETA Loaded Successfully"
-})
-
-local AdvancedGKSection = GkTab:Section({
-    Title = "Auto GK V2 (Predictive)"
-})
-
 local GKSettings = {
-    CloseDist = 15,
-    FarDist = 35,
-    Lookahead = 2.5,
-    Cooldown = 0.5,
-    CurveStrength = 0.5
+    CloseDist = Config.GK.CloseDist,
+    FarDist = Config.GK.FarDist,
+    Lookahead = Config.GK.Lookahead,
+    Cooldown = Config.GK.Cooldown,
+    CurveStrength = Config.GK.CurveStrength
 }
 
-AdvancedGKSection:Slider({
-    Title = "Close Distance",
-    Step = 1,
-    Value = {Min = 5, Max = 30, Default = Config.GK.CloseDist},
-    Callback = function(v) 
-        Config.GK.CloseDist = v
-        GKSettings.CloseDist = v 
+-- UI Construction
+local Window = WindUI:CreateWindow({
+    Title = "RSS - VETA",
+    Icon = "rbxassetid://106211849494703",
+    Author = "Made By VETA",
+    Folder = "RSSVETA",
+})
+
+-- [TAB 1] Reach
+local ReachTab = Window:Tab({ Title = "Reach", Icon = "sword" })
+local ReachMain = ReachTab:Section({ Title = "Reach Controls" })
+
+ReachMain:Toggle({
+    Title = "Enable Reach",
+    Desc = "Extends hitbox range",
+    Default = Config.Reach.Enabled,
+    Callback = function(v)
+        Config.Reach.Enabled = v
+        if v then EnableReach() else DisableReach() end
     end
 })
 
-AdvancedGKSection:Slider({
-    Title = "Far Distance",
-    Step = 1,
-    Value = {Min = 20, Max = 60, Default = Config.GK.FarDist},
-    Callback = function(v) 
-        Config.GK.FarDist = v
-        GKSettings.FarDist = v 
+ReachMain:Toggle({
+    Title = "Show Hitbox",
+    Desc = "Visualizes the reach hitbox",
+    Default = Config.Reach.Visualizer,
+    Callback = function(v)
+        Config.Reach.Visualizer = v
+        IsVisualizerEnabled = v
+        UpdateHitbox()
     end
 })
 
-AdvancedGKSection:Slider({
-    Title = "Lookahead Time",
-    Step = 0.1,
-    Value = {Min = 1, Max = 5, Default = Config.GK.Lookahead},
-    Callback = function(v) 
-        Config.GK.Lookahead = v
-        GKSettings.Lookahead = v 
-    end
+local ReachSize = ReachTab:Section({ Title = "Hitbox Dimensions" })
+
+ReachSize:Slider({
+    Title = "Size X",
+    Step = 0.5,
+    Value = {Min = 0.5, Max = 50, Default = Config.Reach.Size.X},
+    Callback = function(v) Config.Reach.Size.X = v; HitboxSize = Vector3.new(v, Config.Reach.Size.Y, Config.Reach.Size.Z); UpdateHitbox() end
+})
+ReachSize:Slider({
+    Title = "Size Y",
+    Step = 0.5,
+    Value = {Min = 0.5, Max = 50, Default = Config.Reach.Size.Y},
+    Callback = function(v) Config.Reach.Size.Y = v; HitboxSize = Vector3.new(Config.Reach.Size.X, v, Config.Reach.Size.Z); UpdateHitbox() end
+})
+ReachSize:Slider({
+    Title = "Size Z",
+    Step = 0.5,
+    Value = {Min = 0.5, Max = 50, Default = Config.Reach.Size.Z},
+    Callback = function(v) Config.Reach.Size.Z = v; HitboxSize = Vector3.new(Config.Reach.Size.X, Config.Reach.Size.Y, v); UpdateHitbox() end
 })
 
-AdvancedGKSection:Slider({
-    Title = "Dive Cooldown",
-    Step = 0.1,
-    Value = {Min = 0.1, Max = 2, Default = Config.GK.Cooldown},
-    Callback = function(v) 
-        Config.GK.Cooldown = v
-        GKSettings.Cooldown = v 
-    end
-})
+-- [TAB 2] Auto GK (Main)
+local AutoGKTab = Window:Tab({ Title = "Auto GK", Icon = "shield" })
+local GKMain = AutoGKTab:Section({ Title = "Bot Controls" })
 
-AdvancedGKSection:Slider({
-    Title = "Curve Prediction (Magnus)",
-    Desc = "Adjusts how much spin affects trajectory prediction",
-    Step = 0.1,
-    Value = {Min = 0, Max = 2, Default = Config.GK.CurveStrength},
-    Callback = function(v) 
-        Config.GK.CurveStrength = v
-        GKSettings.CurveStrength = v 
-    end
-})
-
-
-
-AdvancedGKSection:Toggle({
+GKMain:Toggle({
     Title = "Enable Auto GK V2",
-    Desc = "Predicts and dives towards ball landing",
+    Desc = "Predicts and dives (Curve Supported)",
     Default = Config.GK.AutoDive,
     Callback = function(enabled)
         Config.GK.AutoDive = enabled
@@ -1432,7 +791,6 @@ AdvancedGKSection:Toggle({
 
         if not enabled then return end
 
-        -- Ensure mutual exclusion: disable Auto Dive if it's running
         if getgenv().AutoDiveConnection then
             pcall(function() getgenv().AutoDiveConnection:Disconnect() end)
             getgenv().AutoDiveConnection = nil
@@ -1443,16 +801,13 @@ AdvancedGKSection:Toggle({
         local STEP = 0.04
         local lastDive = 0
         local leftBtn, rightBtn = nil, nil
-        local jumpBtn = nil -- Mobile jump button
+        local jumpBtn = nil 
 
-        -- reuse button finder
         local function findButtonsLocal()
             local l, r = nil, nil
             if type(safeFindDiveButtons) == 'function' then
                 l, r = safeFindDiveButtons()
             end
-            
-            -- Find mobile jump button
             local j = nil
             local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
             if playerGui then
@@ -1461,15 +816,13 @@ AdvancedGKSection:Toggle({
                      j = touchGui.TouchControlFrame:FindFirstChild("JumpButton")
                 end
             end
-            
             return l, r, j
         end
 
         leftBtn, rightBtn, jumpBtn = findButtonsLocal()
         
-        -- Listen for respawn to update buttons
         local function onRespawn()
-             task.wait(1) -- wait for gui to load
+             task.wait(1) 
              leftBtn, rightBtn, jumpBtn = findButtonsLocal()
         end
         
@@ -1478,7 +831,7 @@ AdvancedGKSection:Toggle({
         getgenv().AutoGKV2Respawn = respawnConn
 
         local function tryClickLocal(b)
-            if not b then return end -- safety
+            if not b then return end 
             if type(tryClick) == 'function' then
                 return tryClick(b)
             end
@@ -1490,8 +843,7 @@ AdvancedGKSection:Toggle({
             if char and char:FindFirstChild("Humanoid") then
                 char.Humanoid.Jump = true
             end
-            -- Backup for mobile button
-            if jumpBtn and jumpBtn.Parent then -- check if still exists
+            if jumpBtn and jumpBtn.Parent then 
                  pcall(function() 
                     local pos = jumpBtn.AbsolutePosition
                     local size = jumpBtn.AbsoluteSize
@@ -1504,39 +856,26 @@ AdvancedGKSection:Toggle({
             end
         end
 
-        -- Enhanced physics prediction for Auto GK (with Magnus Effect)
         local function predictLanding(pos, vel, rot)
             local g = Vector3.new(0, -196.2, 0)
             local p = pos
             local v = vel
             local w = rot or Vector3.new()
             
-            -- Physics constants
             local airResistance = 0.99 
             local dt = STEP
             local gravityDt = g * dt
             local airResStep = airResistance ^ dt
             
-            -- Magnus Effect Coefficient
-            -- F_m = S * (w x v)
-            -- S is roughly approximated by CurveStrength setting
-            local curveCoeff = GKSettings.CurveStrength * 0.1 -- Scale down for reasonable game physics
+            local curveCoeff = GKSettings.CurveStrength * 0.1 
             
             for t = 0, GKSettings.Lookahead, STEP do
-                -- Calculate Magnus acceleration: a = F/m. Assuming mass=1 for simplicity.
-                -- Cross product: Angular Velocity X Linear Velocity
                 local magnusAcc = w:Cross(v) * curveCoeff
-                
-                -- Update velocity with Gravity + Magnus
                 v = v + gravityDt + (magnusAcc * dt)
-                
-                -- Apply drag
                 v = v * airResStep
-                
-                -- Update position
                 p = p + v * dt
                 
-                if p.Y <= 3 then -- near ground
+                if p.Y <= 3 then 
                     return p
                 end
             end
@@ -1555,14 +894,11 @@ AdvancedGKSection:Toggle({
              local airResStep = airResistance ^ dt
              local curveCoeff = GKSettings.CurveStrength * 0.1
 
-             -- Check peak height within lookahead
              for t = 0, GKSettings.Lookahead, STEP do
                  local magnusAcc = w:Cross(v) * curveCoeff
                  v = v + gravityDt + (magnusAcc * dt)
                  v = v * airResStep
-                 
                  p = p + v * dt
-                 -- If ball is high (e.g. > 7 studs) and near goal
                  if p.Y > 7 and p.Y < 15 then 
                      return true, p
                  end
@@ -1573,20 +909,17 @@ AdvancedGKSection:Toggle({
         local lastAutoGKV2Check = 0
         getgenv().AutoGKV2Connection = RunService.Heartbeat:Connect(function()
             local now = tick()
-            if now - lastAutoGKV2Check < 0.05 then return end -- throttle checks to ~20Hz (faster for 7v7)
+            if now - lastAutoGKV2Check < 0.05 then return end 
             lastAutoGKV2Check = now
 
             local ball, bp, bv, brot = GetBallData()
             if not ball or not bp then return end
             
-            -- If buttons are missing, try to find them once
             if not leftBtn or not rightBtn then
                 leftBtn, rightBtn, jumpBtn = findButtonsLocal()
             end
 
             local landing = predictLanding(bp, bv, brot) or bp
-            -- NOTE: isBallHeadingToGoal still uses linear check for fast rejection, 
-            -- but we trust the curved prediction 'landing' for final dive decision.
             local heading, landingPos = isBallHeadingToGoal(ball, bv, GKSettings.Lookahead + 0.3)
             local isHigh, highPos = predictHighShot(bp, bv, brot)
             
@@ -1594,30 +927,25 @@ AdvancedGKSection:Toggle({
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if not root then return end
 
-            -- If curve prediction differs significantly from linear 'landingPos', prefer curved 'landing'
-            -- We re-check if 'landing' is actually in goal
             local bounds = findGoalBounds()
             local isCurvingToGoal = false
             if bounds and isPointInBounds(landing, bounds) then
                  isCurvingToGoal = true
             end
             
-            -- Combine linear and curved logic: if either says yes
             if heading or isCurvingToGoal then
                  local targetPos = isCurvingToGoal and landing or landingPos
                  local dist = (root.Position - targetPos).Magnitude
                  
-                -- Ball heading to goal
                 if dist <= GKSettings.FarDist then
                     local now2 = tick()
                     if now2 - lastDive < GKSettings.Cooldown then return end
                     
                     local localPos = root.CFrame:PointToObjectSpace(targetPos)
                     
-                    -- Smart High Dive Logic
                     if isHigh and highPos then
                         tryJump()
-                        task.wait(0.1) -- small delay before dive
+                        task.wait(0.1) 
                     end
 
                     if localPos.X < 0 then
@@ -1628,7 +956,6 @@ AdvancedGKSection:Toggle({
                     lastDive = now2
                 end
             else
-                -- Not heading to goal, but close
                 if dist <= GKSettings.CloseDist then
                     local now2 = tick()
                     if now2 - lastDive < GKSettings.Cooldown then return end
@@ -1646,18 +973,85 @@ AdvancedGKSection:Toggle({
     end
 })
 
-local AssistSection = GkTab:Section({ Title = "Assists & Visuals" })
+GKMain:Dropdown({
+    Title = "Game Mode",
+    Multi = false,
+    Default = Config.GK.Mode,
+    Values = {"7v7", "11v11"},
+    Callback = function(v) Config.GK.Mode = v end
+})
+
+GKMain:Dropdown({
+    Title = "Choose Team",
+    Multi = false,
+    Default = "None",
+    Values = {"Home", "Away", "None"},
+    Callback = function(v)
+        local t = nil
+        if v == "Home" then t = game.Teams:FindFirstChild("Home") end
+        if v == "Away" then t = game.Teams:FindFirstChild("Away") end
+        
+        if t then
+            pcall(function() 
+                game:GetService("ReplicatedStorage").Events.Team:FireServer(t) 
+            end)
+        end
+    end
+})
+
+-- [TAB 3] GK Tuning (New)
+local GKTuningTab = Window:Tab({ Title = "GK Tuning", Icon = "sliders" })
+
+local GKDistances = GKTuningTab:Section({ Title = "Distance Settings" })
+GKDistances:Slider({
+    Title = "Close Distance",
+    Step = 1,
+    Value = {Min = 5, Max = 30, Default = Config.GK.CloseDist},
+    Callback = function(v) Config.GK.CloseDist = v; GKSettings.CloseDist = v end
+})
+GKDistances:Slider({
+    Title = "Far Distance",
+    Step = 1,
+    Value = {Min = 20, Max = 60, Default = Config.GK.FarDist},
+    Callback = function(v) Config.GK.FarDist = v; GKSettings.FarDist = v end
+})
+
+local GKPhysics = GKTuningTab:Section({ Title = "Physics & Timing" })
+GKPhysics:Slider({
+    Title = "Lookahead Time",
+    Step = 0.1,
+    Value = {Min = 1, Max = 5, Default = Config.GK.Lookahead},
+    Callback = function(v) Config.GK.Lookahead = v; GKSettings.Lookahead = v end
+})
+GKPhysics:Slider({
+    Title = "Dive Cooldown",
+    Step = 0.1,
+    Value = {Min = 0.1, Max = 2, Default = Config.GK.Cooldown},
+    Callback = function(v) Config.GK.Cooldown = v; GKSettings.Cooldown = v end
+})
+GKPhysics:Slider({
+    Title = "Curve Prediction (Magnus)",
+    Desc = "Spin influence (0-2)",
+    Step = 0.1,
+    Value = {Min = 0, Max = 2, Default = Config.GK.CurveStrength},
+    Callback = function(v) Config.GK.CurveStrength = v; GKSettings.CurveStrength = v end
+})
+
+-- [TAB 4] Visuals (New)
+local VisualsTab = Window:Tab({ Title = "Visuals", Icon = "eye" })
+local VisualAssists = VisualsTab:Section({ Title = "GK Assists" })
+
+-- Assist Part Logic Variables
 local AssistPart = nil
 local AssistUpdate = nil
 
-AssistSection:Toggle({
-    Title = "Enable Position Guide",
-    Desc = "Green line shows optimal GK positioning",
+VisualAssists:Toggle({
+    Title = "Position Guide",
+    Desc = "Green line for optimal positioning",
     Default = Config.Visuals.PositionAssist,
     Callback = function(v)
         Config.Visuals.PositionAssist = v
         if v then
-            -- Create visual Part (more reliable than Adornment)
             if not AssistPart then
                 AssistPart = Instance.new("Part")
                 AssistPart.Name = "GKAssistVisual"
@@ -1683,16 +1077,12 @@ AssistSection:Toggle({
                     return 
                 end
                 
-                -- Update goal center rarely
                 if not cachedGoalCenter or tick() - lastCheck > 10 then
                     lastCheck = tick()
                     local sumPos = Vector3.new(0,0,0)
                     local count = 0
                     local radius = 150
-                    
                     local folders = {Workspace:FindFirstChild("Map"), Workspace:FindFirstChild("Goals")}
-                    
-                    -- Optimized search: Look in specific folders first
                     for _, parent in ipairs(folders) do
                         if parent then
                             for _, p in ipairs(parent:GetDescendants()) do
@@ -1709,8 +1099,6 @@ AssistSection:Toggle({
                             end
                         end
                     end
-                    
-                    -- Fallback only if nothing found in folders
                     if count == 0 then
                          for _, p in ipairs(Workspace:GetChildren()) do
                             if p:IsA("Model") and (string.find(string.lower(p.Name), "goal") or string.find(string.lower(p.Name), "map")) then
@@ -1726,36 +1114,22 @@ AssistSection:Toggle({
                             end
                          end
                     end
-                    
-                    if count > 0 then
-                        cachedGoalCenter = sumPos / count
-                        if notFoundWarned then notFoundWarned = false end
-                    end
+                    if count > 0 then cachedGoalCenter = sumPos / count end
                 end
                 
                 if cachedGoalCenter then
-                    -- Dynamic Ideal Position based on Ball
                     local ball = FindBall()
-                    local target = Vector3.new(0, 0, 0) -- default to center field
-                    if ball and ball.Position then
-                        target = ball.Position
-                    end
+                    local target = Vector3.new(0, 0, 0)
+                    if ball and ball.Position then target = ball.Position end
                     
-                    -- Vector from Goal to Ball
                     local goalToBall = (target - cachedGoalCenter)
-                    -- Flatten Y (we only care about horizontal positioning)
                     goalToBall = Vector3.new(goalToBall.X, 0, goalToBall.Z)
-                    
                     local dir = goalToBall.Unit
                     if goalToBall.Magnitude < 0.1 then dir = Vector3.new(0, 0, -1) end
                     
-                    -- Ideal spot: 6 studs out from goal, facing ball
                     local ideal = cachedGoalCenter + dir * 6
-                    
-                    -- Force Y to player height
                     ideal = Vector3.new(ideal.X, root.Position.Y - 1.5, ideal.Z)
                     local startPos = root.Position + Vector3.new(0, -1.5, 0)
-                    
                     local dist = (startPos - ideal).Magnitude
                     local mid = (startPos + ideal) / 2
                     
@@ -1763,10 +1137,9 @@ AssistSection:Toggle({
                     AssistPart.CFrame = CFrame.lookAt(mid, ideal)
                     AssistPart.Transparency = 0.3
                     
-                    -- Color logic: Green if close, Red/Orange if far
                     if dist < 2 then
                          AssistPart.Color = Color3.fromRGB(0, 255, 100)
-                         AssistPart.Material = Enum.Material.ForceField -- pulsing effect
+                         AssistPart.Material = Enum.Material.ForceField 
                     else
                          AssistPart.Color = Color3.fromRGB(255, 80, 0)
                          AssistPart.Material = Enum.Material.Neon
@@ -1785,20 +1158,19 @@ AssistSection:Toggle({
 local PredictionMarker = nil
 local PredictionUpdate = nil
 
-AssistSection:Toggle({
+VisualAssists:Toggle({
     Title = "Goal Prediction Marker",
-    Desc = "Shows where the ball will enter the goal",
+    Desc = "Shows where ball will land",
     Default = Config.Visuals.PredictionMarker,
     Callback = function(v)
         Config.Visuals.PredictionMarker = v
         if v then
-            -- Create marker
             if not PredictionMarker then
                 PredictionMarker = Instance.new("Part")
                 PredictionMarker.Name = "GKPredictionMarker"
                 PredictionMarker.Shape = Enum.PartType.Ball
                 PredictionMarker.Material = Enum.Material.Neon
-                PredictionMarker.Color = Color3.fromRGB(255, 0, 0) -- Red for danger/action
+                PredictionMarker.Color = Color3.fromRGB(255, 0, 0) 
                 PredictionMarker.Size = Vector3.new(2, 2, 2)
                 PredictionMarker.Anchored = true
                 PredictionMarker.CanCollide = false
@@ -1810,9 +1182,6 @@ AssistSection:Toggle({
             local RunService = game:GetService("RunService")
             PredictionUpdate = RunService.RenderStepped:Connect(function()
                 local ball, pos, vel, rot = GetBallData()
-                
-                -- Visualization also needs curve support!
-                -- Reusing logic similar to Auto GK
                 local curveCoeff = (GKSettings.CurveStrength or 0.5) * 0.1
                 local g = Vector3.new(0, -196.2, 0)
                 local p = pos
@@ -1831,7 +1200,6 @@ AssistSection:Toggle({
                         v = v * (airResistance ^ dt)
                         p = p + v * dt
                         
-                        -- Simple ground check or goal check
                         local bounds = findGoalBounds()
                         if bounds and isPointInBounds(p, bounds) then
                             found = true
@@ -1845,7 +1213,6 @@ AssistSection:Toggle({
                 if found and finalPos then
                     PredictionMarker.Position = finalPos
                     PredictionMarker.Transparency = 0.3
-                    -- Pulse effect
                     local t = tick() * 10
                     PredictionMarker.Size = Vector3.new(2,2,2) + Vector3.new(0.5,0.5,0.5) * math.sin(t)
                 else
@@ -1859,55 +1226,405 @@ AssistSection:Toggle({
     end
 })
 
-AssistSection:Slider({
-    Title = "Field of View",
+local PredictSection = VisualsTab:Section({ Title = "Ball Trajectory" })
+local predictionConnection = nil
+local curveFolder = nil
+
+PredictSection:Toggle({
+    Title = "Enable Trajectory Curve",
+    Desc = "Visualize flight path",
+    Default = false,
+    Callback = function(Value)
+        if Value then
+            local config = {
+                gravity = 196.2,
+                bounceDamping = 0.68,
+                groundHeight = 0,
+                minBounceVelocity = 8,
+                airResistance = 0.99,
+                frictionCoefficient = 0.85,
+                terminalVelocity = 200,
+                segmentCount = 25,
+                segmentSize = Vector3.new(0.3, 0.3, 2),
+                segmentTransparency = 0.2,
+                maxPredictionTime = 10,
+                minVelocityThreshold = 3,
+                simulationTimestep = 0.033,
+                maxSimulationPoints = 80,
+                updateRate = 3,
+                colorCurve = Color3.fromRGB(0, 255, 0),
+                colorLanding = Color3.fromRGB(0, 255, 0),
+            }
+
+            local gravityVector = Vector3.new(0, -config.gravity, 0)
+
+            curveFolder = Instance.new("Folder")
+            curveFolder.Name = "BallPredictionCurve"
+            curveFolder.Parent = workspace
+
+            local segments = table.create(config.segmentCount)
+            for i = 1, config.segmentCount do
+                local segment = Instance.new("Part")
+                segment.Name = "Segment_" .. i
+                segment.Anchored = true
+                segment.CanCollide = false
+                segment.CastShadow = false
+                segment.Material = Enum.Material.Neon
+                segment.Transparency = config.segmentTransparency
+                segment.Size = config.segmentSize
+                segment.Color = config.colorCurve
+                segment.Parent = curveFolder
+                segments[i] = segment
+            end
+
+            local landingMarker = Instance.new("Part")
+            landingMarker.Name = "LandingMarker"
+            landingMarker.Anchored = true
+            landingMarker.CanCollide = false
+            landingMarker.CastShadow = false
+            landingMarker.Material = Enum.Material.Neon
+            landingMarker.Color = config.colorLanding
+            landingMarker.Transparency = 0.4
+            landingMarker.Size = Vector3.new(4, 0.2, 4)
+            landingMarker.Shape = Enum.PartType.Cylinder
+            landingMarker.Parent = curveFolder
+
+            local landingRing = Instance.new("Part")
+            landingRing.Name = "LandingRing"
+            landingRing.Anchored = true
+            landingRing.CanCollide = false
+            landingRing.CastShadow = false
+            landingRing.Material = Enum.Material.Neon
+            landingRing.Color = config.colorLanding
+            landingRing.Transparency = 0.6
+            landingRing.Size = Vector3.new(6, 0.1, 6)
+            landingRing.Shape = Enum.PartType.Cylinder
+            landingRing.Parent = curveFolder
+
+            local function simulateTrajectory(startPos, startVel)
+                local points = table.create(config.maxSimulationPoints)
+                local dt = config.simulationTimestep
+                local maxTime = config.maxPredictionTime
+                local gravityDt = gravityVector * dt
+                local airResistance = config.airResistance ^ dt
+                
+                local pos = startPos
+                local vel = startVel
+                local time = 0
+                local bounceCount = 0
+                local pointCount = 0
+                
+                while time < maxTime and bounceCount < 8 and pointCount < config.maxSimulationPoints do
+                    time = time + dt
+                    pointCount = pointCount + 1
+                    vel = (vel + gravityDt) * airResistance
+                    if vel.Y < -config.terminalVelocity then
+                        vel = Vector3.new(vel.X, -config.terminalVelocity, vel.Z)
+                    end
+                    pos = pos + vel * dt
+                    
+                    points[pointCount] = {pos, vel, vel.Magnitude}
+                    
+                    if pos.Y <= config.groundHeight and vel.Y < 0 then
+                        pos = Vector3.new(pos.X, config.groundHeight, pos.Z)
+                        local bounceVelY = -vel.Y * config.bounceDamping
+                        vel = Vector3.new(vel.X * config.frictionCoefficient, bounceVelY, vel.Z * config.frictionCoefficient)
+                        bounceCount = bounceCount + 1
+                        if vel.Magnitude < config.minBounceVelocity then
+                            points[pointCount] = {pos, Vector3.zero, 0}
+                            break
+                        end
+                    end
+                    
+                    if pos.Y < -500 or vel.Magnitude < 0.3 then break end
+                end
+                return points, pointCount
+            end
+
+            local function findFirstLanding(points, count)
+                for i = 2, count do
+                    local curr = points[i]
+                    local prev = points[i-1]
+                    local currPos, currVel = curr[1], curr[2]
+                    local prevPos, prevVel = prev[1], prev[2]
+                    
+                    if currPos.Y <= config.groundHeight + 0.5 and prevPos.Y > config.groundHeight + 0.5 and currVel.Y < 0 then
+                        local t = (config.groundHeight - prevPos.Y) / (currPos.Y - prevPos.Y)
+                        t = math.clamp(t, 0, 1)
+                        return prevPos:Lerp(currPos, t), prevVel:Lerp(currVel, t)
+                    end
+                end
+                return nil, nil
+            end
+
+            local frameCounter = 0
+            predictionConnection = RunService.Heartbeat:Connect(function()
+                frameCounter = frameCounter + 1
+                if frameCounter % config.updateRate ~= 0 then return end
+                
+                local ball = GetBallData()
+                if not ball then
+                    for i = 1, config.segmentCount do segments[i].Transparency = 1 end
+                    landingMarker.Transparency = 1
+                    landingRing.Transparency = 1
+                    return
+                end
+                
+                local velocity = ball.AssemblyLinearVelocity
+                local speed = velocity.Magnitude
+                if speed < config.minVelocityThreshold then
+                    for i = 1, config.segmentCount do segments[i].Transparency = 1 end
+                    landingMarker.Transparency = 1
+                    landingRing.Transparency = 1
+                    return
+                end
+                
+                local trajectoryPoints, pointCount = simulateTrajectory(ball.Position, velocity)
+                
+                if pointCount > 1 then
+                    local segmentStep = (pointCount - 1) / (config.segmentCount - 1)
+                    for i = 1, config.segmentCount do
+                        local pointIndex = math.floor((i - 1) * segmentStep) + 1
+                        local nextIndex = math.min(pointIndex + 1, pointCount)
+                        if pointIndex <= pointCount and nextIndex <= pointCount then
+                            local current = trajectoryPoints[pointIndex]
+                            local next = trajectoryPoints[nextIndex]
+                            local currentPos, nextPos = current[1], next[1]
+                            local midpoint = (currentPos + nextPos) * 0.5
+                            local distance = (nextPos - currentPos).Magnitude
+                            if distance > 0.01 then
+                                local direction = (nextPos - currentPos) / distance
+                                segments[i].Size = Vector3.new(0.3, 0.3, distance)
+                                segments[i].CFrame = CFrame.lookAt(midpoint, midpoint + direction)
+                                segments[i].Transparency = config.segmentTransparency
+                            else
+                                segments[i].Transparency = 1
+                            end
+                        else
+                            segments[i].Transparency = 1
+                        end
+                    end
+                else
+                    for i = 1, config.segmentCount do segments[i].Transparency = 1 end
+                end
+                
+                local landingPos, landingVel = findFirstLanding(trajectoryPoints, pointCount)
+                if landingPos then
+                    local markerPos = landingPos + Vector3.new(0, 0.1, 0)
+                    landingMarker.CFrame = CFrame.new(markerPos) * CFrame.Angles(0, 0, math.pi * 0.5)
+                    landingMarker.Transparency = 0.4
+                    local ringPos = landingPos + Vector3.new(0, 0.05, 0)
+                    landingRing.CFrame = CFrame.new(ringPos) * CFrame.Angles(0, 0, math.pi * 0.5)
+                    landingRing.Transparency = 0.6
+                    local pulse = math.sin(tick() * 5) * 0.5 + 0.5
+                    local scale = 6 + pulse
+                    landingRing.Size = Vector3.new(scale, 0.1, scale)
+                else
+                    landingMarker.Transparency = 1
+                    landingRing.Transparency = 1
+                end
+            end)
+        else
+            if predictionConnection then predictionConnection:Disconnect() predictionConnection = nil end
+            if curveFolder then curveFolder:Destroy() curveFolder = nil end
+        end
+    end
+})
+
+
+-- [TAB 5] Player
+local PlayerTab = Window:Tab({ Title = "Player", Icon = "user" })
+local PlayerChar = PlayerTab:Section({ Title = "Character" })
+
+PlayerChar:Slider({
+    Title = "WalkSpeed",
     Step = 1,
-    Value = {Min = 70, Max = 120, Default = Config.Visuals.FOV},
+    Value = {Min = 16, Max = 100, Default = 16},
     Callback = function(v)
-        Config.Visuals.FOV = v
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+            LocalPlayer.Character.Humanoid.WalkSpeed = v
+        end
+    end
+})
+
+PlayerChar:Slider({
+    Title = "JumpPower",
+    Step = 1,
+    Value = {Min = 50, Max = 200, Default = 50},
+    Callback = function(v)
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+            LocalPlayer.Character.Humanoid.UseJumpPower = true
+            LocalPlayer.Character.Humanoid.JumpPower = v
+        end
+    end
+})
+
+PlayerChar:Toggle({
+    Title = "Infinite Stamina",
+    Default = false,
+    Callback = function(v)
+        getgenv().InfiniteStaminaEnabled = v
+        if speeds then
+            speeds.Walk.Value = v and speeds.Run.Value or defaultWalk
+        end
+    end
+})
+
+PlayerChar:Toggle({
+    Title = "Anti-Ragdoll",
+    Default = false,
+    Callback = function(v)
+        if v then
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                LocalPlayer.Character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+                LocalPlayer.Character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+            end
+        end
+    end
+})
+
+local PlayerTools = PlayerTab:Section({ Title = "Tools & Camera" })
+
+PlayerTools:Toggle({
+    Title = "Auto Face Ball",
+    Default = false,
+    Callback = function(v)
+        local RunService = game:GetService("RunService")
+        if v then
+             getgenv().AutoFaceConnection = RunService.RenderStepped:Connect(function()
+                 local ball = FindBall()
+                 if ball and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                     local root = LocalPlayer.Character.HumanoidRootPart
+                     local target = Vector3.new(ball.Position.X, root.Position.Y, ball.Position.Z)
+                     root.CFrame = CFrame.lookAt(root.Position, target)
+                 end
+             end)
+        else
+             if getgenv().AutoFaceConnection then getgenv().AutoFaceConnection:Disconnect() end
+        end
+    end
+})
+
+local BallCamConn = nil
+PlayerTools:Toggle({
+    Title = "Ball Camera",
+    Default = false,
+    Callback = function(v)
+        if v then
+            local RunService = game:GetService("RunService")
+            BallCamConn = RunService.RenderStepped:Connect(function()
+                local ball = FindBall()
+                if ball and Workspace.CurrentCamera then
+                    Workspace.CurrentCamera.CameraSubject = ball
+                end
+            end)
+        else
+            if BallCamConn then
+                BallCamConn:Disconnect()
+                BallCamConn = nil
+            end
+            if Workspace.CurrentCamera and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                Workspace.CurrentCamera.CameraSubject = LocalPlayer.Character.Humanoid
+            end
+        end
+    end
+})
+
+PlayerTools:Slider({
+    Title = "Field Of View",
+    Step = 1,
+    Value = {Min = 70, Max = 120, Default = 70},
+    Callback = function(v)
         if Workspace.CurrentCamera then
             Workspace.CurrentCamera.FieldOfView = v
         end
     end
 })
 
--- Settings Tab
-local SettingsTab = Window:Tab({
-    Title = "Settings",
-    Icon = "settings"
-})
+-- [TAB 6] System
+local SystemTab = Window:Tab({ Title = "System", Icon = "settings" })
+local SysOpt = SystemTab:Section({ Title = "Optimization" })
 
-local SettingsSection = SettingsTab:Section({ Title = "Configuration" })
-
-SettingsSection:Button({
-    Title = "Save Config",
-    Desc = "Saves current settings to file",
+SysOpt:Button({
+    Title = "Performance Optimizer",
+    Desc = "Reduce lag (FPS Boost)",
     Callback = function()
-        SaveConfig()
-        WindUI:Notify({Title = "Config", Content = "Settings saved to " .. ConfigFileName, Icon = "save"})
+        ApplyOptimizations(true)
     end
 })
 
-SettingsSection:Button({
-    Title = "Load Config",
-    Desc = "Loads settings from file (requires rejoin/refresh to fully apply)",
+SysOpt:Button({
+    Title = "Restore Graphics",
+    Desc = "Re-enable effects",
     Callback = function()
-        if LoadConfig() then
-            WindUI:Notify({Title = "Config", Content = "Settings loaded! Restart script to apply.", Icon = "check"})
-        else
-            WindUI:Notify({Title = "Config", Content = "No config file found", Icon = "alert-triangle"})
-        end
+        ApplyOptimizations(false)
+    end
+})
+
+local SysConfig = SystemTab:Section({ Title = "Configuration" })
+
+SysConfig:Button({
+    Title = "Save Settings",
+    Callback = function()
+        SaveConfig()
+        WindUI:Notify({Title = "Config", Content = "Settings Saved", Icon = "save"})
+    end
+})
+
+SysConfig:Button({
+    Title = "Load Settings",
+    Callback = function()
+        LoadConfig()
+        WindUI:Notify({Title = "Config", Content = "Settings Loaded", Icon = "download"})
     end
 })
 
 -- Auto-load config on startup
-if LoadConfig() then
-    -- Apply some non-UI critical settings immediately
-    GKSettings.CloseDist = Config.GK.CloseDist
-    GKSettings.FarDist = Config.GK.FarDist
-    GKSettings.Lookahead = Config.GK.Lookahead
-    GKSettings.Cooldown = Config.GK.Cooldown
-    HitboxSize = Vector3.new(Config.Reach.Size.X, Config.Reach.Size.Y, Config.Reach.Size.Z)
+task.delay(1, function()
+    if LoadConfig() then
+        -- Apply some non-UI critical settings immediately
+        GKSettings.CloseDist = Config.GK.CloseDist
+        GKSettings.FarDist = Config.GK.FarDist
+        GKSettings.Lookahead = Config.GK.Lookahead
+        GKSettings.Cooldown = Config.GK.Cooldown
+        GKSettings.CurveStrength = Config.GK.CurveStrength
+        HitboxSize = Vector3.new(Config.Reach.Size.X, Config.Reach.Size.Y, Config.Reach.Size.Z)
+        
+        WindUI:Notify({Title = "Config", Content = "Auto-loaded settings", Icon = "info"})
+    end
+end)
+
+Window:SelectTab(1)
+
+local Dialog = Window:Dialog({
+    Icon = "bird",
+    Title = "Hey!",
+    Content = "Report To Our Discord If You Found Bugs/Glitches",
+    Buttons = {
+        {
+            Title = "Continue",
+            Callback = function()
+                if type(CreateMainUI) == "function" then
+                    pcall(CreateMainUI)
+                end
+            end
+        }
+    }
+})
+
+function CreateMainUI()
+    pcall(function()
+        WindUI:Notify({
+            Title = "UI",
+            Icon = "check",
+            Content = "Main UI initialized",
+            Duration = 2,
+        })
+    end)
 end
 
-Window:SetupWindow()
+WindUI:Notify({
+    Title = "RSS Loaded",
+    Icon = "check",
+    Content = "RSS VETA Loaded Successfully"
+})
