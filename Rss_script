@@ -610,6 +610,14 @@ local DiveToggle = DiveSection:Toggle({
 
         if not enabled then return end
 
+        -- Ensure mutual exclusion: disable Auto GK V2 if it's running
+        if getgenv().AutoGKV2Connection then
+            pcall(function() getgenv().AutoGKV2Connection:Disconnect() end)
+            getgenv().AutoGKV2Connection = nil
+            pcall(function() WindUI:Notify({Title = "Auto GK", Content = "Auto GK V2 disabled to avoid conflicts", Icon = "info"}) end)
+        end
+        getgenv().AutoGKMode = "V1"
+
         local DIVE_DISTANCE = 10.5
         local DIVE_COOLDOWN = 0.65
         local SMART_DIVE = true
@@ -681,7 +689,12 @@ local DiveToggle = DiveSection:Toggle({
             lastDiveTime = now
         end
 
+        local lastAutoDiveCheck = 0
         getgenv().AutoDiveConnection = RunService.Heartbeat:Connect(function()
+            local now = tick()
+            if now - lastAutoDiveCheck < 0.06 then return end -- throttle checks to ~16Hz
+            lastAutoDiveCheck = now
+
             local ball, bp, bv = GetBallData()
             if not ball or not bp then return end
 
@@ -1158,6 +1171,14 @@ AdvancedGKSection:Toggle({
 
         if not enabled then return end
 
+        -- Ensure mutual exclusion: disable Auto Dive if it's running
+        if getgenv().AutoDiveConnection then
+            pcall(function() getgenv().AutoDiveConnection:Disconnect() end)
+            getgenv().AutoDiveConnection = nil
+            pcall(function() WindUI:Notify({Title = "Auto GK", Content = "Auto Dive disabled to avoid conflicts", Icon = "info"}) end)
+        end
+        getgenv().AutoGKMode = "V2"
+
         local DIVE_COOLDOWN = 0.8
         local MAX_LOOKAHEAD = 2.2
         local STEP = 0.05
@@ -1196,7 +1217,12 @@ AdvancedGKSection:Toggle({
             return nil
         end
 
+        local lastAutoGKV2Check = 0
         getgenv().AutoGKV2Connection = RunService.Heartbeat:Connect(function()
+            local now = tick()
+            if now - lastAutoGKV2Check < 0.07 then return end -- throttle checks to ~14Hz
+            lastAutoGKV2Check = now
+
             local ball, bp, bv = GetBallData()
             if not ball or not bp then return end
 
@@ -1212,8 +1238,8 @@ AdvancedGKSection:Toggle({
             local dist = (root.Position - (landingPos or landing)).Magnitude
             if dist > allowedDist then return end
 
-            local now = tick()
-            if now - lastDive < DIVE_COOLDOWN then return end
+            local now2 = tick()
+            if now2 - lastDive < DIVE_COOLDOWN then return end
 
             local localPos = root.CFrame:PointToObjectSpace(landingPos or landing)
             if localPos.X < 0 then
@@ -1222,7 +1248,7 @@ AdvancedGKSection:Toggle({
                 tryClickLocal(rightBtn)
             end
 
-            lastDive = now
+            lastDive = now2
         end)
     end
 })
