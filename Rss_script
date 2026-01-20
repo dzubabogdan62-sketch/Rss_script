@@ -297,26 +297,31 @@ AutoPickSection:Dropdown({
 
 -- GK Variables
 local GKV2_ENABLED = false
+local V1_ENABLED = false
 local GKV2_MIN_BALL_SPEED = 8
 local GKV2_NEAR_GOAL_DISTANCE_4v4 = 25
 local GKV2_NEAR_GOAL_DISTANCE_7v7 = 45
-local GKV2_DIVE_COOLDOWN = 0.45
+local GKV2_DIVE_COOLDOWN = 0.5
 local GKV2_DETECTION_DISTANCE = 40
 local GK_GOAL_Z_POSITION = -150
 
 local DIVE_DISTANCE_REGULAR = 25
-local DIVE_COOLDOWN_REGULAR = 0.45
+local DIVE_COOLDOWN_REGULAR = 0.5
 local PREDICTION_TIME_REGULAR = 0.18
 local MIN_BALL_SPEED_REGULAR = 7
 
+local GKV2LastDive = 0
+local V1LastDive = 0
+
 -- GK Logic Functions
 local function isBallHeadingToGoal(ball, playerPos)
+    if not ball or not playerPos then return false end
     local ballVel = ball.AssemblyLinearVelocity
     local ballSpeed = ballVel.Magnitude
     if ballSpeed < GKV2_MIN_BALL_SPEED then return false end
     
     local ballToGoal = (Vector3.new(playerPos.X, playerPos.Y, GK_GOAL_Z_POSITION) - ball.Position)
-    return ballVel:Dot(ballToGoal.Unit) > ballSpeed * 0.3
+    return ballVel:Dot(ballToGoal.Unit) > ballSpeed * 0.25
 end
 
 local function isPlayerNearGoal(playerPos)
@@ -372,26 +377,25 @@ V2_Toggle_Func = GKV2Section:Toggle({
     Default = false,
     Callback = function(enabled)
         GKV2_ENABLED = enabled
+        V1_ENABLED = false
         
         if getgenv().GKV2_CONNECTION then getgenv().GKV2_CONNECTION:Disconnect() end
+        if getgenv().AutoDiveConnection then getgenv().AutoDiveConnection:Disconnect() end
         
-        -- Conflict: Disable V1 if enabled
-        if enabled and getgenv().AutoDiveConnection then
-           -- Note: WindUI doesn't easily let us programmatically toggle the UI switch to false visually without a reference, 
-           -- but we can disconnect the logic.
-           getgenv().AutoDiveConnection:Disconnect()
-           getgenv().AutoDiveConnection = nil
-           WindUI:Notify({Title = "Mode Switch", Content = "Disabled Auto Dive V1 to run V2", Duration = 2})
+        if enabled then
+            WindUI:Notify({Title = "Auto GK V2", Content = "Enabled - V1 disabled", Duration = 2})
+        else
+            return
         end
-
-        if not enabled then return end
-        
-        local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-        local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
-        local lastDiveTime = 0
         
         getgenv().GKV2_CONNECTION = RunService.Heartbeat:Connect(function()
             if not GKV2_ENABLED then return end
+            
+            local Character = LocalPlayer.Character
+            if not Character then return end
+            local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+            local Humanoid = Character:FindFirstChild("Humanoid")
+            if not HumanoidRootPart or not Humanoid then return end
             
             local ball = GetActiveBall()
             if not ball then return end
@@ -405,10 +409,13 @@ V2_Toggle_Func = GKV2Section:Toggle({
             if not isPlayerNearGoal(playerPos) then return end
             if (playerPos - ball.Position).Magnitude > GKV2_DETECTION_DISTANCE then return end
             
-            if tick() - lastDiveTime < GKV2_DIVE_COOLDOWN then return end
+            local now = tick()
+            if now - GKV2LastDive < GKV2_DIVE_COOLDOWN then return end
             
-            TryJump(calculateDiveDirection(ball, HumanoidRootPart.CFrame))
-            lastDiveTime = tick()
+            if Humanoid.Health > 0 and Humanoid:GetState() ~= Enum.HumanoidStateType.Freefall then
+                TryJump(calculateDiveDirection(ball, HumanoidRootPart.CFrame))
+                GKV2LastDive = now
+            end
         end)
     end
 })
@@ -419,26 +426,29 @@ V1_Toggle_Func = DiveSection:Toggle({
     Desc = "Simple prediction",
     Default = false,
     Callback = function(enabled)
-        if getgenv().AutoDiveConnection then getgenv().AutoDiveConnection:Disconnect() end
+        V1_ENABLED = enabled
+        GKV2_ENABLED = false
         
-        -- Conflict: Disable V2 if enabled
-        if enabled and GKV2_ENABLED then
-            GKV2_ENABLED = false
-            if getgenv().GKV2_CONNECTION then getgenv().GKV2_CONNECTION:Disconnect() end
-            WindUI:Notify({Title = "Mode Switch", Content = "Disabled Auto GK V2 to run V1", Duration = 2})
+        if getgenv().AutoDiveConnection then getgenv().AutoDiveConnection:Disconnect() end
+        if getgenv().GKV2_CONNECTION then getgenv().GKV2_CONNECTION:Disconnect() end
+        
+        if enabled then
+            WindUI:Notify({Title = "Auto Dive V1", Content = "Enabled - V2 disabled", Duration = 2})
+        else
+            return
         end
 
-        if not enabled then return end
-
-        local HumanoidRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        local lastDiveTime = 0
-
         getgenv().AutoDiveConnection = RunService.Heartbeat:Connect(function()
+            if not V1_ENABLED then return end
+            
+            local Character = LocalPlayer.Character
+            if not Character then return end
+            local HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+            local Humanoid = Character:FindFirstChild("Humanoid")
+            if not HumanoidRootPart or not Humanoid then return end
+            
             local ball = GetActiveBall()
             if not ball then return end
-            
-            HumanoidRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if not HumanoidRootPart then return end
             
             local ballPos = ball.Position
             local ballVel = ball.AssemblyLinearVelocity
@@ -448,20 +458,38 @@ V1_Toggle_Func = DiveSection:Toggle({
             
             local distance = (HumanoidRootPart.Position - ballPos).Magnitude
             if distance <= DIVE_DISTANCE_REGULAR and distance > 1 then
-                if tick() - lastDiveTime >= DIVE_COOLDOWN_REGULAR then
-                    -- Simple Smart Dive Logic
-                    local predicted = ballPos + ballVel * PREDICTION_TIME_REGULAR
-                    local localPos = HumanoidRootPart.CFrame:PointToObjectSpace(predicted)
-                    local dirX, dirY = localPos.X, localPos.Y
-                    
-                    if ballSpeed > 20 then
-                        if dirY > 3 then TryJump(dirX < -1 and "Left" or (dirX > 1 and "Right" or "Upper"))
-                        elseif dirY < -2 then TryJump("Center")
-                        else TryJump(dirX < -0.5 and "Left" or (dirX > 0.5 and "Right" or "Center")) end
-                    else
-                        TryJump(dirX < -1 and "Left" or (dirX > 1 and "Right" or "Center"))
+                local now = tick()
+                if now - V1LastDive >= DIVE_COOLDOWN_REGULAR then
+                    if Humanoid.Health > 0 and Humanoid:GetState() ~= Enum.HumanoidStateType.Freefall then
+                        local predicted = ballPos + ballVel * PREDICTION_TIME_REGULAR
+                        local localPos = HumanoidRootPart.CFrame:PointToObjectSpace(predicted)
+                        local dirX, dirY = localPos.X, localPos.Y
+                        
+                        if ballSpeed > 20 then
+                            if dirY > 3 then
+                                TryJump(dirX < -1 and "Left" or (dirX > 1 and "Right" or "Upper"))
+                            elseif dirY < -2 then
+                                TryJump("Center")
+                            else
+                                TryJump(dirX < -0.5 and "Left" or (dirX > 0.5 and "Right" or "Center"))
+                            end
+                        elseif ballSpeed > 12 then
+                            if dirY > 4 then
+                                TryJump(dirX < -2 and "UpperLeft" or (dirX > 2 and "UpperRight" or "Upper"))
+                            elseif dirY < -1 then
+                                TryJump("Center")
+                            else
+                                TryJump(dirX < -1.5 and "Left" or (dirX > 1.5 and "Right" or "Center"))
+                            end
+                        else
+                            if dirY > 5 then
+                                TryJump("Upper")
+                            else
+                                TryJump(dirX < -1 and "Left" or (dirX > 1 and "Right" or "Center"))
+                            end
+                        end
+                        V1LastDive = now
                     end
-                    lastDiveTime = tick()
                 end
             end
         end)
