@@ -103,6 +103,75 @@ local function FindBall()
     return nil
 end
 
+-- Returns active ball part, position and velocity (if available)
+local function GetBallData()
+    local b = FindBall()
+    if not b then return nil end
+    local pos = nil
+    local vel = Vector3.new()
+    pcall(function()
+        pos = b.Position
+        vel = b.AssemblyLinearVelocity or (b:IsA("BasePart") and b.Velocity) or Vector3.new()
+    end)
+    return b, pos, vel
+end
+
+-- Find goal-related parts and compute an axis-aligned bounding box covering them
+local function findGoalBounds()
+    local candidates = {}
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local lname = string.lower(obj.Name)
+            if string.find(lname, "goal") or string.find(lname, "net") or string.find(lname, "post") or string.find(lname, "goalzone") or string.find(lname, "goalarea") then
+                table.insert(candidates, obj)
+            end
+        end
+    end
+
+    if #candidates == 0 then return nil end
+
+    local minV = Vector3.new(1e9,1e9,1e9)
+    local maxV = Vector3.new(-1e9,-1e9,-1e9)
+    for _, p in ipairs(candidates) do
+        local size = p.Size * 0.5
+        local cpos = p.Position
+        local a = cpos - size
+        local b = cpos + size
+        minV = Vector3.new(math.min(minV.X, a.X), math.min(minV.Y, a.Y), math.min(minV.Z, a.Z))
+        maxV = Vector3.new(math.max(maxV.X, b.X), math.max(maxV.Y, b.Y), math.max(maxV.Z, b.Z))
+    end
+    return {min = minV, max = maxV}
+end
+
+local function isPointInBounds(pt, bounds)
+    if not pt or not bounds then return false end
+    return pt.X >= bounds.min.X and pt.X <= bounds.max.X and pt.Y >= bounds.min.Y and pt.Y <= bounds.max.Y and pt.Z >= bounds.min.Z and pt.Z <= bounds.max.Z
+end
+
+-- Simulate short trajectory to check whether ball will enter goal bounds within lookahead seconds
+local function isBallHeadingToGoal(ballPart, velocity, lookahead)
+    if not ballPart or not velocity then return false, nil end
+    lookahead = lookahead or 2
+    local bounds = findGoalBounds()
+    if not bounds then return false, nil end
+
+    local g = Vector3.new(0, -196.2, 0)
+    local pos = ballPart.Position
+    local vel = velocity
+    local dt = 0.05
+    local time = 0
+    while time < lookahead do
+        vel = vel + g * dt
+        pos = pos + vel * dt
+        time = time + dt
+        if isPointInBounds(pos, bounds) then
+            return true, pos
+        end
+        if pos.Y < -200 then break end
+    end
+    return false, nil
+end
+
 local function ReachLoop()
     local root = GetRoot()
     if not root or not RSSHitbox then return end
@@ -225,6 +294,130 @@ function tryClick(btn)
             btn.MouseButton1Click:Fire()
         end
     end)
+end
+
+-- Find the main jump button (for Space equivalents) on mobile
+function safeFindJumpButton()
+    local ok, gui = pcall(function()
+        return LocalPlayer:FindFirstChild("PlayerGui")
+    end)
+    if not ok or not gui then return nil end
+
+    local candidates = {
+        {"MobileCTRL","TouchControlFrame","JumpButton"},
+        {"MobileControls","TouchFrame","JumpBtn"},
+    }
+
+    for _, path in ipairs(candidates) do
+        local node = gui
+        for _, name in ipairs(path) do
+            node = node and node:FindFirstChild(name)
+            if not node then break end
+        end
+        if node then return node end
+    end
+
+    return nil
+end
+
+-- Decide whether to dive: fast shot heading to goal and not held by nearby player
+function shouldDive(ballPart, ballPos, ballVel)
+    if not ballPart or not ballPos or not ballVel then return false end
+    local speed = ballVel.Magnitude
+    if speed < 6 then return false end
+
+    -- if ball heading to goal within short lookahead
+    local heading = isBallHeadingToGoal(ballPart, ballVel, 2.2)
+    if not heading then return false end
+
+    -- if another player is very close to ball, assume contested
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") and pl ~= LocalPlayer then
+            local d = (pl.Character.HumanoidRootPart.Position - ballPos).Magnitude
+            if d < 2.5 then return false end
+        end
+    end
+
+    return true
+end
+
+-- Check if player is near own goal. modeSeven flag selects 7v7 distances.
+function isPlayerNearGoal(maxMode7)
+    local root = GetRoot()
+    if not root then return false end
+    local bounds = findGoalBounds()
+    if not bounds then return false end
+    -- compute closest point on bounds to player
+    local px, py, pz = root.Position.X, root.Position.Y, root.Position.Z
+    local cx = math.clamp(px, bounds.min.X, bounds.max.X)
+    local cy = math.clamp(py, bounds.min.Y, bounds.max.Y)
+    local cz = math.clamp(pz, bounds.min.Z, bounds.max.Z)
+    local dist = (Vector3.new(px,py,pz) - Vector3.new(cx,cy,cz)).Magnitude
+    local thresh = maxMode7 and 40 or 25
+    return dist <= thresh
+end
+
+-- Calculate dive direction string based on predicted landing point
+function calculateDiveDirection(landingPos)
+    local root = GetRoot()
+    if not root or not landingPos then return "X" end
+    local localPos = root.CFrame:PointToObjectSpace(landingPos)
+    local right = localPos.X
+    local up = localPos.Y
+    local forward = localPos.Z
+
+    -- aerials
+    if up >= 6 then
+        if right > 3 then return "E+Space" end
+        if right < -3 then return "Q+Space" end
+        return "Space"
+    end
+
+    -- medium height
+    if up >= 2 and up < 6 then
+        if math.abs(right) > 4 then return right > 0 and "E" or "Q" end
+        return "X+Space"
+    end
+
+    -- low shots
+    if math.abs(right) > 3 then return right > 0 and "E" or "Q" end
+    if forward < 3 then return "X" end
+    return "X"
+end
+
+-- Execute dive: mobile-first (buttons), fallback to PC virtual keys if available
+function doDive(keyStr)
+    if not keyStr then return end
+
+    -- normalize
+    keyStr = tostring(keyStr)
+    local parts = {}
+    for token in string.gmatch(keyStr, "[^%+]+") do table.insert(parts, token:match("^%s*(.-)%s*$")) end
+
+    -- try mobile
+    local leftBtn, rightBtn = safeFindDiveButtons()
+    local jumpBtn = safeFindJumpButton()
+
+    local function mobilePress(k)
+        if k == "E" then tryClick(rightBtn)
+        elseif k == "Q" then tryClick(leftBtn)
+        elseif k == "X" then
+            -- low dive: tap both quick to bias center
+            tryClick(leftBtn); task.wait(0.02); tryClick(rightBtn)
+        elseif k == "Space" then tryClick(jumpBtn)
+        end
+    end
+
+    local mobileWorked = false
+    if (leftBtn or rightBtn or jumpBtn) then
+        for _, k in ipairs(parts) do pcall(function() mobilePress(k) end) end
+        mobileWorked = true
+    end
+
+    if mobileWorked then return end
+
+    -- Mobile-only: do not attempt PC key simulation.
+    -- If mobile buttons were not found, there's nothing to do on this device.
 end
 
 local function safeLoadWindUI()
@@ -489,12 +682,21 @@ local DiveToggle = DiveSection:Toggle({
         end
 
         getgenv().AutoDiveConnection = RunService.Heartbeat:Connect(function()
-            local ball = workspace:FindFirstChild("ball") or workspace:FindFirstChild("PSoccerBall")
-            if not ball then return end
-            local bp = ball.Position or (ball:IsA("Model") and ball:FindFirstChildWhichIsA("BasePart") and ball:FindFirstChildWhichIsA("BasePart").Position)
-            if not bp then return end
+            local ball, bp, bv = GetBallData()
+            if not ball or not bp then return end
 
+            -- if ball heading into goal, be more aggressive
+            local heading, landingPos = isBallHeadingToGoal(ball, bv, 2.2)
             local distance = (HumanoidRootPart.Position - bp).Magnitude
+
+            if heading then
+                -- if heading, react even from farther away
+                if distance <= DIVE_DISTANCE * 1.8 then
+                    autoDive(landingPos or bp)
+                end
+                return
+            end
+
             if distance <= DIVE_DISTANCE then
                 autoDive(bp)
             end
@@ -995,26 +1197,25 @@ AdvancedGKSection:Toggle({
         end
 
         getgenv().AutoGKV2Connection = RunService.Heartbeat:Connect(function()
-            local ball = workspace:FindFirstChild("ball") or workspace:FindFirstChild("PSoccerBall")
-            if not ball then return end
-            local bp = ball.Position
-            local bv = ball.AssemblyLinearVelocity or Vector3.new()
-            if not bp then return end
+            local ball, bp, bv = GetBallData()
+            if not ball or not bp then return end
 
-            local landing = predictLanding(bp, bv)
-            if not landing then return end
+            local landing = predictLanding(bp, bv) or bp
 
+            -- check if predicted landing is inside goal bounds; if so, allow larger reaction distance
+            local heading, landingPos = isBallHeadingToGoal(ball, bv, 2.5)
             local char = LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if not root then return end
 
-            local dist = (root.Position - landing).Magnitude
-            if dist > 18 then return end -- only dive if landing fairly close
+            local allowedDist = heading and 26 or 18
+            local dist = (root.Position - (landingPos or landing)).Magnitude
+            if dist > allowedDist then return end
 
             local now = tick()
             if now - lastDive < DIVE_COOLDOWN then return end
 
-            local localPos = root.CFrame:PointToObjectSpace(landing)
+            local localPos = root.CFrame:PointToObjectSpace(landingPos or landing)
             if localPos.X < 0 then
                 tryClickLocal(leftBtn)
             else
