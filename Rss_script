@@ -68,9 +68,9 @@ local function UpdateHitbox()
         core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     end
 
-    local shouldShow = IsReachEnabled and IsVisualizerEnabled
-    if outer then outer.Transparency = shouldShow and 0.85 or 1 end
-    if core then core.Transparency = shouldShow and 0.55 or 1 end
+    local shouldShow = IsReachEnabled
+    if outer then outer.Transparency = shouldShow and 0.5 or 1 end
+    if core then core.Transparency = shouldShow and 0.3 or 1 end
 end
 
 local function GetRoot() 
@@ -275,7 +275,15 @@ SetupStamina()
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(2)
     SetupStamina()
+    CreateHitbox()
+    UpdateHitbox()
 end)
+
+if LocalPlayer.Character then
+    task.wait(1)
+    CreateHitbox()
+    UpdateHitbox()
+end
 
 -- Safe helpers for mobile dive buttons and firing them
 function safeFindDiveButtons()
@@ -467,6 +475,11 @@ local function safeLoadWindUI()
 end
 
 local WindUI = safeLoadWindUI()
+
+if not WindUI or not WindUI.CreateWindow then
+    warn("[VETA] WindUI failed to load - UI will not appear")
+    return
+end
 
 local Window = WindUI:CreateWindow({
     Title = "RSS - VETA",
@@ -1111,7 +1124,6 @@ local function restoreEffects()
         end)
     end
     savedStates = {}
-end
 end
 
 local function ApplyOptimizations(enable)
