@@ -1072,7 +1072,90 @@ local PlayerTab = Window:Tab({
 })
 
 local PlayerSection = PlayerTab:Section({
-    Title = "Soon."
+    Title = "Movement & Utilities"
+})
+
+PlayerSection:Slider({
+    Title = "WalkSpeed",
+    Step = 1,
+    Value = {Min = 16, Max = 100, Default = 16},
+    Callback = function(v)
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.WalkSpeed = v
+        end
+    end
+})
+
+PlayerSection:Slider({
+    Title = "JumpPower",
+    Step = 1,
+    Value = {Min = 50, Max = 200, Default = 50},
+    Callback = function(v)
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.UseJumpPower = true
+            char.Humanoid.JumpPower = v
+        end
+    end
+})
+
+local AntiRagdollConn = nil
+PlayerSection:Toggle({
+    Title = "Anti-Ragdoll",
+    Desc = "Prevents falling/stunning",
+    Default = false,
+    Callback = function(v)
+        if v then
+            local RunService = game:GetService("RunService")
+            AntiRagdollConn = RunService.Stepped:Connect(function()
+                local char = LocalPlayer.Character
+                if char and char:FindFirstChild("Humanoid") then
+                    char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+                    char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+                    if char.Humanoid.PlatformStand then
+                        char.Humanoid.PlatformStand = false
+                    end
+                end
+            end)
+        else
+            if AntiRagdollConn then
+                AntiRagdollConn:Disconnect()
+                AntiRagdollConn = nil
+            end
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("Humanoid") then
+                char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+                char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+            end
+        end
+    end
+})
+
+local BallCamConn = nil
+PlayerSection:Toggle({
+    Title = "Ball Camera",
+    Desc = "Locks camera to ball",
+    Default = false,
+    Callback = function(v)
+        if v then
+            local RunService = game:GetService("RunService")
+            BallCamConn = RunService.RenderStepped:Connect(function()
+                local ball = FindBall()
+                if ball and Workspace.CurrentCamera then
+                    Workspace.CurrentCamera.CameraSubject = ball
+                end
+            end)
+        else
+            if BallCamConn then
+                BallCamConn:Disconnect()
+                BallCamConn = nil
+            end
+            if Workspace.CurrentCamera and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                Workspace.CurrentCamera.CameraSubject = LocalPlayer.Character.Humanoid
+            end
+        end
+    end
 })
 
 local Dialog = Window:Dialog({
@@ -1175,21 +1258,34 @@ AdvancedGKSection:Toggle({
         local STEP = 0.04
         local lastDive = 0
         local leftBtn, rightBtn = nil, nil
+        local jumpBtn = nil -- Mobile jump button
 
         -- reuse button finder
         local function findButtonsLocal()
+            local l, r = nil, nil
             if type(safeFindDiveButtons) == 'function' then
-                return safeFindDiveButtons()
+                l, r = safeFindDiveButtons()
             end
-            return nil
+            
+            -- Find mobile jump button
+            local j = nil
+            local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+            if playerGui then
+                local touchGui = playerGui:FindFirstChild("TouchGui")
+                if touchGui and touchGui:FindFirstChild("TouchControlFrame") then
+                     j = touchGui.TouchControlFrame:FindFirstChild("JumpButton")
+                end
+            end
+            
+            return l, r, j
         end
 
-        leftBtn, rightBtn = findButtonsLocal()
+        leftBtn, rightBtn, jumpBtn = findButtonsLocal()
         
         -- Listen for respawn to update buttons
         local function onRespawn()
              task.wait(1) -- wait for gui to load
-             leftBtn, rightBtn = findButtonsLocal()
+             leftBtn, rightBtn, jumpBtn = findButtonsLocal()
         end
         
         local respawnConn = LocalPlayer.CharacterAdded:Connect(onRespawn)
@@ -1202,6 +1298,25 @@ AdvancedGKSection:Toggle({
                 return tryClick(b)
             end
             pcall(function() if b and b.MouseButton1Click then b.MouseButton1Click:Fire() end end)
+        end
+        
+        local function tryJump()
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("Humanoid") then
+                char.Humanoid.Jump = true
+            end
+            -- Backup for mobile button
+            if jumpBtn and jumpBtn.Parent then -- check if still exists
+                 pcall(function() 
+                    local pos = jumpBtn.AbsolutePosition
+                    local size = jumpBtn.AbsoluteSize
+                    local center = pos + size/2
+                    game:GetService("VirtualInputManager"):SendTouchEvent(12345, 0, center.X, center.Y)
+                    task.delay(0.1, function()
+                         game:GetService("VirtualInputManager"):SendTouchEvent(12345, 1, center.X, center.Y)
+                    end)
+                 end)
+            end
         end
 
         local function predictLanding(pos, vel)
@@ -1218,6 +1333,23 @@ AdvancedGKSection:Toggle({
             end
             return nil
         end
+        
+        local function predictHighShot(pos, vel)
+             local g = Vector3.new(0, -196.2, 0)
+             local p = pos
+             local v = vel
+             -- Check peak height within lookahead
+             for t = 0, GKSettings.Lookahead, STEP do
+                 local dt = STEP
+                 v = v + g * dt
+                 p = p + v * dt
+                 -- If ball is high (e.g. > 7 studs) and near goal
+                 if p.Y > 7 and p.Y < 15 then 
+                     return true, p
+                 end
+             end
+             return false, nil
+        end
 
         local lastAutoGKV2Check = 0
         getgenv().AutoGKV2Connection = RunService.Heartbeat:Connect(function()
@@ -1230,16 +1362,19 @@ AdvancedGKSection:Toggle({
             
             -- If buttons are missing, try to find them once
             if not leftBtn or not rightBtn then
-                leftBtn, rightBtn = findButtonsLocal()
+                leftBtn, rightBtn, jumpBtn = findButtonsLocal()
             end
 
             local landing = predictLanding(bp, bv) or bp
             local heading, landingPos = isBallHeadingToGoal(ball, bv, GKSettings.Lookahead + 0.3)
+            local isHigh, highPos = predictHighShot(bp, bv)
+            
             local char = LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if not root then return end
 
-            local dist = (root.Position - (landingPos or landing)).Magnitude
+            local targetPos = landingPos or landing
+            local dist = (root.Position - targetPos).Magnitude
             
             if heading then
                 -- Ball heading to goal
@@ -1247,7 +1382,14 @@ AdvancedGKSection:Toggle({
                     local now2 = tick()
                     if now2 - lastDive < GKSettings.Cooldown then return end
                     
-                    local localPos = root.CFrame:PointToObjectSpace(landingPos or landing)
+                    local localPos = root.CFrame:PointToObjectSpace(targetPos)
+                    
+                    -- Smart High Dive Logic
+                    if isHigh and highPos then
+                        tryJump()
+                        task.wait(0.1) -- small delay before dive
+                    end
+
                     if localPos.X < 0 then
                         tryClickLocal(leftBtn)
                     else
