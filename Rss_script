@@ -17,6 +17,66 @@ local _CachedBall = nil
 local _CachedGoalBounds = nil
 local _LastBallSearch = 0
 
+local function CreateHitbox()
+    if RSSHitbox then RSSHitbox:Destroy() end
+    RSSHitbox = Instance.new("Folder")
+    RSSHitbox.Name = "RSSHitbox"
+    RSSHitbox.Parent = Workspace
+
+    -- Outer ring (subtle)
+    local outer = Instance.new("BoxHandleAdornment")
+    outer.Name = "Outer"
+    outer.AlwaysOnTop = false
+    outer.ZIndex = 1
+    outer.Color3 = Color3.fromRGB(0, 150, 255)
+    outer.Transparency = 1
+    outer.Size = HitboxSize * 1.15
+    outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    outer.Parent = RSSHitbox
+
+    -- Inner core (more visible)
+    local core = Instance.new("BoxHandleAdornment")
+    core.Name = "Core"
+    core.AlwaysOnTop = true
+    core.ZIndex = 2
+    core.Color3 = Color3.fromRGB(0, 255, 100)
+    core.Transparency = 1
+    core.Size = HitboxSize
+    core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    core.Parent = RSSHitbox
+
+    -- Pulse helper to animate when visible
+    local pulse = Instance.new("BoolValue")
+    pulse.Name = "Pulse"
+    pulse.Value = false
+    pulse.Parent = RSSHitbox
+end
+
+local function UpdateHitbox()
+    if not RSSHitbox or not RSSHitbox.Parent then return end
+
+    local outer = RSSHitbox:FindFirstChild("Outer")
+    local core = RSSHitbox:FindFirstChild("Core")
+
+    if outer then
+        outer.Size = HitboxSize * 1.15
+        outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    end
+
+    if core then
+        core.Size = HitboxSize
+        core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    end
+
+    local shouldShow = IsReachEnabled and IsVisualizerEnabled
+    if outer then outer.Transparency = shouldShow and 0.85 or 1 end
+    if core then core.Transparency = shouldShow and 0.55 or 1 end
+end
+
+local function GetRoot() 
+    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+end
+
 local function FindBall()
     local now = tick()
     if _CachedBall and _CachedBall.Parent and now - _LastBallSearch < 0.5 then
@@ -1227,62 +1287,4 @@ AdvancedGKSection:Toggle({
     end
 })
 
-local function CreateHitbox()
-    if RSSHitbox then RSSHitbox:Destroy() end
-    RSSHitbox = Instance.new("Folder")
-    RSSHitbox.Name = "RSSHitbox"
-    RSSHitbox.Parent = Workspace
-
-    -- Outer ring (subtle)
-    local outer = Instance.new("BoxHandleAdornment")
-    outer.Name = "Outer"
-    outer.AlwaysOnTop = false
-    outer.ZIndex = 1
-    outer.Color3 = Color3.fromRGB(0, 150, 255)
-    outer.Transparency = 1
-    outer.Size = HitboxSize * 1.15
-    outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    outer.Parent = RSSHitbox
-
-    -- Inner core (more visible)
-    local core = Instance.new("BoxHandleAdornment")
-    core.Name = "Core"
-    core.AlwaysOnTop = true
-    core.ZIndex = 2
-    core.Color3 = Color3.fromRGB(0, 255, 100)
-    core.Transparency = 1
-    core.Size = HitboxSize
-    core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    core.Parent = RSSHitbox
-
-    -- Pulse helper to animate when visible
-    local pulse = Instance.new("BoolValue")
-    pulse.Name = "Pulse"
-    pulse.Value = false
-    pulse.Parent = RSSHitbox
-end
-
-local function UpdateHitbox()
-    if not RSSHitbox or not RSSHitbox.Parent then return end
-
-    local outer = RSSHitbox:FindFirstChild("Outer")
-    local core = RSSHitbox:FindFirstChild("Core")
-
-    if outer then
-        outer.Size = HitboxSize * 1.15
-        outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    end
-
-    if core then
-        core.Size = HitboxSize
-        core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    end
-
-    local shouldShow = IsReachEnabled and IsVisualizerEnabled
-    if outer then outer.Transparency = shouldShow and 0.85 or 1 end
-    if core then core.Transparency = shouldShow and 0.55 or 1 end
-end
-
-local function GetRoot() 
-    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-end
+Window:SetupWindow()
