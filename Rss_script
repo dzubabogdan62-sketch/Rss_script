@@ -147,7 +147,7 @@ end
 
 local function FindBall()
     local now = tick()
-    if _CachedBall and _CachedBall.Parent and now - _LastBallSearch < 0.5 then
+    if _CachedBall and _CachedBall.Parent and now - _LastBallSearch < 0.1 then -- Faster cache (0.1s)
         return _CachedBall
     end
     _LastBallSearch = now
@@ -164,7 +164,7 @@ local function FindBall()
         return nil
     end
 
-    local names = {"ball", "Ball", "PSoccerBall", "TPS", "SoccerBall", "Football", "Ball1"}
+    local names = {"ball", "Ball", "PSoccerBall", "TPS", "SoccerBall", "Football", "Ball1", "GameBall", "MyBall"}
     for _, name in ipairs(names) do
         -- Search in Workspace children first (faster than recursive)
         local found = Workspace:FindFirstChild(name)
@@ -389,7 +389,7 @@ if LocalPlayer.Character then
 end
 
 -- Safe helpers for mobile dive buttons and firing them
-function safeFindDiveButtons()
+local function safeFindDiveButtons()
     local ok, gui = pcall(function()
         return LocalPlayer:FindFirstChild("PlayerGui")
     end)
@@ -419,7 +419,7 @@ function safeFindDiveButtons()
     return nil
 end
 
-function tryClick(btn)
+local function tryClick(btn)
     if not btn then return end
     pcall(function()
         if getconnections then
@@ -437,7 +437,7 @@ function tryClick(btn)
 end
 
 -- Find the main jump button (for Space equivalents) on mobile
-function safeFindJumpButton()
+local function safeFindJumpButton()
     local ok, gui = pcall(function()
         return LocalPlayer:FindFirstChild("PlayerGui")
     end)
@@ -461,7 +461,7 @@ function safeFindJumpButton()
 end
 
 -- Decide whether to dive: fast shot heading to goal and not held by nearby player
-function shouldDive(ballPart, ballPos, ballVel)
+local function shouldDive(ballPart, ballPos, ballVel)
     if not ballPart or not ballPos or not ballVel then return false end
     local speed = ballVel.Magnitude
     if speed < 6 then return false end
@@ -482,7 +482,7 @@ function shouldDive(ballPart, ballPos, ballVel)
 end
 
 -- Check if player is near own goal. modeSeven flag selects 7v7 distances.
-function isPlayerNearGoal(maxMode7)
+local function isPlayerNearGoal(maxMode7)
     local root = GetRoot()
     if not root then return false end
     local bounds = findGoalBounds()
@@ -498,7 +498,7 @@ function isPlayerNearGoal(maxMode7)
 end
 
 -- Calculate dive direction string based on predicted landing point
-function calculateDiveDirection(landingPos)
+local function calculateDiveDirection(landingPos)
     local root = GetRoot()
     if not root or not landingPos then return "X" end
     local localPos = root.CFrame:PointToObjectSpace(landingPos)
@@ -526,9 +526,9 @@ function calculateDiveDirection(landingPos)
 end
 
 -- Execute dive: mobile-first (buttons), fallback to PC virtual keys if available
-function doDive(keyStr)
+local function doDive(keyStr)
     if not keyStr then return end
-
+    
     -- normalize
     keyStr = tostring(keyStr)
     local parts = {}
@@ -771,9 +771,9 @@ local function FindDefendedGoal()
          end
      end
      
-     if not closestPart then return root.Position end -- Fallback to player pos if detection fails logic
-     
-     -- Now find all parts close to this closest part (e.g. within 30 studs) to form the "Defended Goal"
+     if not closestPart then return root.Position, false end -- Fallback to player pos if detection fails logic
+    
+    -- Now find all parts close to this closest part (e.g. within 30 studs) to form the "Defended Goal"
      local goalParts = {}
      for _, p in ipairs(candidates) do
          if (p.Position - closestPart.Position).Magnitude < 30 then
@@ -794,8 +794,8 @@ local function FindDefendedGoal()
      end
      
      local center = (minV + maxV) / 2
-     return center
- end
+    return center, true
+end
 
 -- UI Construction
 local Window = WindUI:CreateWindow({
@@ -935,60 +935,44 @@ GKMain:Toggle({
             end
         end
 
-        local function predictLanding(pos, vel, rot)
+        -- New Accurate Prediction: Finds exactly where/when ball enters goal
+        local function PredictGoalIntersection(pos, vel, rot)
+            local bounds = findGoalBounds()
+            if not bounds then return nil, nil end
+
             local g = Vector3.new(0, -196.2, 0)
             local p = pos
             local v = vel
             local w = rot or Vector3.new()
             
             local airResistance = 0.99 
-            local dt = STEP
-            local gravityDt = g * dt
-            local airResStep = airResistance ^ dt
+            local dt = 0.03 -- Higher precision step
+            local maxSteps = math.floor(GKSettings.Lookahead / dt)
             
-            -- Reduced default curve influence to avoid over-prediction
-            local curveCoeff = (GKSettings.CurveStrength or 0.5) * 0.05 
+            local curveCoeff = (GKSettings.CurveStrength or 0.5) * 0.1 -- Stronger curve influence
             
-            for t = 0, GKSettings.Lookahead, STEP do
+            for i = 1, maxSteps do
                 local magnusAcc = w:Cross(v) * curveCoeff
-                v = v + gravityDt + (magnusAcc * dt)
-                v = v * airResStep
+                v = v + (g * dt) + (magnusAcc * dt)
+                v = v * (airResistance ^ dt)
                 p = p + v * dt
                 
-                if p.Y <= 3 then 
-                    return p
+                -- Check if point is inside goal bounds
+                if isPointInBounds(p, bounds) then
+                    return p, true -- Intersection found
                 end
+                
+                -- Optimization: If passed goal Z depth significantly, stop
+                -- (Assuming goal is roughly aligned, but bounds check is safer)
             end
-            return nil
-        end
-        
-        local function predictHighShot(pos, vel, rot)
-             local g = Vector3.new(0, -196.2, 0)
-             local p = pos
-             local v = vel
-             local w = rot or Vector3.new()
-             
-             local airResistance = 0.99
-             local dt = STEP
-             local gravityDt = g * dt
-             local airResStep = airResistance ^ dt
-             local curveCoeff = GKSettings.CurveStrength * 0.1
-
-             for t = 0, GKSettings.Lookahead, STEP do
-                 local magnusAcc = w:Cross(v) * curveCoeff
-                 v = v + gravityDt + (magnusAcc * dt)
-                 v = v * airResStep
-                 p = p + v * dt
-                 if p.Y > 7 and p.Y < 15 then 
-                     return true, p
-                 end
-             end
-             return false, nil
+            
+            return nil, false
         end
 
         local lastAutoGKV2Check = 0
         local lastPosUpdate = 0
         local lastMoveTarget = Vector3.new()
+        local lastMoveTime = 0
         
         getgenv().AutoGKV2Connection = RunService.Heartbeat:Connect(function()
             local now = tick()
@@ -1002,8 +986,17 @@ GKMain:Toggle({
                 if hum and root and now - lastDive > 0.6 then 
                      -- Determine Defended Goal (update more frequently: 2s)
                      if not DefendedGoalCenter or now - lastPosUpdate > 2 then
-                         DefendedGoalCenter = FindDefendedGoal()
-                         lastPosUpdate = now
+                         local center, found = FindDefendedGoal()
+                         if center then
+                             if found then
+                                 DefendedGoalCenter = center
+                                 lastPosUpdate = now
+                             elseif not DefendedGoalCenter then
+                                 -- Fallback: Use player position only if we have NO goal yet
+                                 DefendedGoalCenter = center
+                                 lastPosUpdate = now
+                             end
+                         end
                      end
                      
                      if DefendedGoalCenter then
@@ -1020,19 +1013,22 @@ GKMain:Toggle({
                          
                          local targetPos = goalPosFlat + dir * (GKSettings.PositionDist or 6)
                          
-                         -- Sensitivity check: Only MoveTo if target changed > 0.2 studs OR we are far from target (> 0.5)
-                         -- This prevents micro-stuttering but allows responsive movement
-                         local distToTarget = (targetPos - root.Position).Magnitude
-                         local targetDiff = (targetPos - lastMoveTarget).Magnitude
-                         
-                         if targetDiff > 0.2 or distToTarget > 0.5 then
-                             hum:MoveTo(targetPos)
-                             lastMoveTarget = targetPos
-                             
-                             -- Face ball while walking
-                             local faceTarget = Vector3.new(ballPos.X, root.Position.Y, ballPos.Z)
-                             root.CFrame = CFrame.lookAt(root.Position, faceTarget)
-                         end
+                         -- Sensitivity check: Only MoveTo if target changed > 0.5 studs OR we are far from target (> 0.5)
+                        -- This prevents micro-stuttering but allows responsive movement
+                        local distToTarget = (targetPos - root.Position).Magnitude
+                        local targetDiff = (targetPos - lastMoveTarget).Magnitude
+                        
+                        if distToTarget > 0.5 then
+                            if targetDiff > 0.5 or (now - lastMoveTime > 0.2) then
+                                hum:MoveTo(targetPos)
+                                lastMoveTarget = targetPos
+                                lastMoveTime = now
+                                
+                                -- Face ball while walking
+                                local faceTarget = Vector3.new(ballPos.X, root.Position.Y, ballPos.Z)
+                                root.CFrame = CFrame.lookAt(root.Position, faceTarget)
+                            end
+                        end
                      end
                 end
             end
@@ -1047,22 +1043,22 @@ GKMain:Toggle({
                 leftBtn, rightBtn, jumpBtn = findButtonsLocal()
             end
 
-            local landing = predictLanding(bp, bv, brot) or bp
-            local heading, landingPos = isBallHeadingToGoal(ball, bv, GKSettings.Lookahead + 0.3)
-            local isHigh, highPos = predictHighShot(bp, bv, brot)
+            -- Smart Prediction
+            local intersectPos, willEnter = PredictGoalIntersection(bp, bv, brot)
+            
+            -- If ball is not entering goal, do nothing (or use fallback)
+            -- But we still check 'heading' for legacy/close range safety
+            local heading, legacyPos = isBallHeadingToGoal(ball, bv, GKSettings.Lookahead + 0.3)
             
             local char = LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if not root then return end
-
-            local bounds = findGoalBounds()
-            local isCurvingToGoal = false
-            if bounds and isPointInBounds(landing, bounds) then
-                 isCurvingToGoal = true
-            end
             
-            if heading or isCurvingToGoal then
-                 local targetPos = isCurvingToGoal and landing or landingPos
+            -- Priority: IntersectPos > LegacyPos > Landing (Removed)
+            local targetPos = intersectPos or legacyPos
+            local isThreat = willEnter or heading
+
+            if isThreat and targetPos then
                  local dist = (root.Position - targetPos).Magnitude
                  
                 if dist <= GKSettings.FarDist then
@@ -1071,24 +1067,30 @@ GKMain:Toggle({
                     
                     local localPos = root.CFrame:PointToObjectSpace(targetPos)
                     
-                    if isHigh and highPos then
+                    -- Jump if high ball detected (Y > 5 relative to ground/root)
+                    -- We check targetPos.Y vs root.Position.Y
+                    if targetPos.Y - root.Position.Y > 4 then
                         tryJump()
-                        task.wait(0.1) 
+                        task.wait(0.05) -- Tiny delay for jump to register before dive
                     end
 
-                    if localPos.X < 0 then
+                    if localPos.X < -1 then -- Leeway to prevent center dives
                         tryClickLocal(leftBtn)
-                    else
+                    elseif localPos.X > 1 then
                         tryClickLocal(rightBtn)
+                    else
+                         -- Center shot? Just jump or do nothing if low
+                         if targetPos.Y - root.Position.Y > 4 then tryJump() end
                     end
                     lastDive = now2
                 end
             else
-                if dist <= GKSettings.CloseDist then
+                -- Close range panic check (fallback)
+                if bp and bv and (root.Position - bp).Magnitude < GKSettings.CloseDist and bvMagnitude > 10 then
                     local now2 = tick()
                     if now2 - lastDive < GKSettings.Cooldown then return end
                     
-                    local localPos = root.CFrame:PointToObjectSpace(landing)
+                    local localPos = root.CFrame:PointToObjectSpace(bp + bv*0.2)
                     if localPos.X < 0 then
                         tryClickLocal(leftBtn)
                     else
