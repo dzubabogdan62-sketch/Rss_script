@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-global, undefined-field, deprecated
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -97,7 +98,7 @@ local function FindBall()
         return nil
     end
 
-    local names = {"ball", "Ball", "PSoccerBall", "TPS", "SoccerBall"}
+    local names = {"ball", "Ball", "PSoccerBall", "TPS", "SoccerBall", "Football", "Ball1"}
     for _, name in ipairs(names) do
         -- Search in Workspace children first (faster than recursive)
         local found = Workspace:FindFirstChild(name)
@@ -146,7 +147,8 @@ local function findGoalBounds()
 
     local candidates = {}
     -- Optimization: Search likely folders first
-    local folders = {Workspace:FindFirstChild("Map"), Workspace:FindFirstChild("Goals"), Workspace}
+    local folders = {Workspace:FindFirstChild("Map"), Workspace:FindFirstChild("Goals")}
+    
     for _, parent in ipairs(folders) do
         if parent then
             for _, obj in ipairs(parent:GetDescendants()) do
@@ -157,7 +159,26 @@ local function findGoalBounds()
                     end
                 end
             end
-            if #candidates > 0 then break end
+        end
+    end
+
+    -- Fallback: Search Workspace children (not descendants) if nothing found yet
+    if #candidates == 0 then
+        for _, obj in ipairs(Workspace:GetChildren()) do
+             if obj:IsA("Model") or obj:IsA("Folder") then
+                -- Check name of model/folder
+                local lname = string.lower(obj.Name)
+                 if string.find(lname, "goal") or string.find(lname, "net") then
+                    for _, child in ipairs(obj:GetDescendants()) do
+                        if child:IsA("BasePart") then table.insert(candidates, child) end
+                    end
+                 end
+             elseif obj:IsA("BasePart") then
+                local lname = string.lower(obj.Name)
+                if string.find(lname, "goal") or string.find(lname, "net") or string.find(lname, "post") or string.find(lname, "goalzone") then
+                    table.insert(candidates, obj)
+                end
+             end
         end
     end
 
@@ -643,9 +664,7 @@ AutoPickSection:Dropdown({
     end
 })
 
-local DiveSection = GkTab:Section({
-        Title = "Auto Dive"
-    })
+
 
 local StaminaTab = Window:Tab({
     Title = "Infinite Stamina",
@@ -958,14 +977,16 @@ local savedStates = {}
 local wasPredictorEnabled = false
 
 local function disableEffects()
-    savedStates = {particles = {}, trails = {}, beams = {}, lights = {}}
-    -- Only check descendants of Map or common folders if possible, otherwise use a throttled approach
+    savedStates = {particles = {}, trails = {}, beams = {}, lights = {}, others = {}}
+    -- Optimization: Use a larger batch size to reduce freeze time
     local count = 0
-    for _, obj in ipairs(Workspace:GetDescendants()) do
+    local descendants = Workspace:GetDescendants()
+    
+    for _, obj in ipairs(descendants) do
         count = count + 1
-        if count % 100 == 0 then task.wait() end -- prevent frame hang
+        if count % 1000 == 0 then task.wait() end -- Process 1000 items per frame
 
-        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Light") then
+        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Light") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
             pcall(function()
                 if obj:IsA("ParticleEmitter") then
                     savedStates.particles[obj] = obj.Enabled
@@ -978,6 +999,9 @@ local function disableEffects()
                     obj.Enabled = false
                 elseif obj:IsA("Light") then
                     savedStates.lights[obj] = obj.Enabled
+                    obj.Enabled = false
+                elseif obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+                    savedStates.others[obj] = obj.Enabled
                     obj.Enabled = false
                 end
             end)
@@ -993,8 +1017,7 @@ local function disableEffects()
             FogEnd = Lighting.FogEnd
         }
         Lighting.GlobalShadows = false
-        Lighting.Brightness = 2
-        Lighting.FogEnd = 1e5
+        Lighting.FogEnd = 9e9
     end)
 end
 
@@ -1003,6 +1026,7 @@ local function restoreEffects()
     for obj, state in pairs(savedStates.trails or {}) do pcall(function() obj.Enabled = state end) end
     for obj, state in pairs(savedStates.beams or {}) do pcall(function() obj.Enabled = state end) end
     for obj, state in pairs(savedStates.lights or {}) do pcall(function() obj.Enabled = state end) end
+    for obj, state in pairs(savedStates.others or {}) do pcall(function() obj.Enabled = state end) end
     if savedStates.lighting then
         pcall(function()
             local Lighting = game:GetService("Lighting")
@@ -1084,11 +1108,46 @@ end
 WindUI:Notify({
     Title = "RSS Loaded",
     Icon = "check",
-    Content = "Go Fuck RSS"
+    Content = "RSS VETA Loaded Successfully"
 })
 
 local AdvancedGKSection = GkTab:Section({
     Title = "Auto GK V2 (Predictive)"
+})
+
+local GKSettings = {
+    CloseDist = 15,
+    FarDist = 35,
+    Lookahead = 2.5,
+    Cooldown = 0.5
+}
+
+AdvancedGKSection:Slider({
+    Title = "Close Distance",
+    Step = 1,
+    Value = {Min = 5, Max = 30, Default = 15},
+    Callback = function(v) GKSettings.CloseDist = v end
+})
+
+AdvancedGKSection:Slider({
+    Title = "Far Distance",
+    Step = 1,
+    Value = {Min = 20, Max = 60, Default = 35},
+    Callback = function(v) GKSettings.FarDist = v end
+})
+
+AdvancedGKSection:Slider({
+    Title = "Lookahead Time",
+    Step = 0.1,
+    Value = {Min = 1, Max = 5, Default = 2.5},
+    Callback = function(v) GKSettings.Lookahead = v end
+})
+
+AdvancedGKSection:Slider({
+    Title = "Dive Cooldown",
+    Step = 0.1,
+    Value = {Min = 0.1, Max = 2, Default = 0.5},
+    Callback = function(v) GKSettings.Cooldown = v end
 })
 
 AdvancedGKSection:Toggle({
@@ -1113,27 +1172,6 @@ AdvancedGKSection:Toggle({
         end
         getgenv().AutoGKMode = "V2"
 
-        -- Параметры для 4v4 и 7v7 режимов
-        local modes = {
-            ["4v4"] = {
-                DIVE_COOLDOWN = 0.6,
-                MAX_LOOKAHEAD = 2.3,
-                CLOSE_DISTANCE = 12,
-                FAR_DISTANCE = 28
-            },
-            ["7v7"] = {
-                DIVE_COOLDOWN = 0.5,
-                MAX_LOOKAHEAD = 2.5,
-                CLOSE_DISTANCE = 15,
-                FAR_DISTANCE = 35
-            }
-        }
-        
-        local mode = modes[PlayerGameMode] or modes["7v7"]
-        local DIVE_COOLDOWN = mode.DIVE_COOLDOWN
-        local MAX_LOOKAHEAD = mode.MAX_LOOKAHEAD
-        local CLOSE_DISTANCE = mode.CLOSE_DISTANCE
-        local FAR_DISTANCE = mode.FAR_DISTANCE
         local STEP = 0.04
         local lastDive = 0
         local leftBtn, rightBtn = nil, nil
@@ -1147,8 +1185,19 @@ AdvancedGKSection:Toggle({
         end
 
         leftBtn, rightBtn = findButtonsLocal()
+        
+        -- Listen for respawn to update buttons
+        local function onRespawn()
+             task.wait(1) -- wait for gui to load
+             leftBtn, rightBtn = findButtonsLocal()
+        end
+        
+        local respawnConn = LocalPlayer.CharacterAdded:Connect(onRespawn)
+        if getgenv().AutoGKV2Respawn then getgenv().AutoGKV2Respawn:Disconnect() end
+        getgenv().AutoGKV2Respawn = respawnConn
 
         local function tryClickLocal(b)
+            if not b then return end -- safety
             if type(tryClick) == 'function' then
                 return tryClick(b)
             end
@@ -1159,7 +1208,7 @@ AdvancedGKSection:Toggle({
             local g = Vector3.new(0, -196.2, 0)
             local p = pos
             local v = vel
-            for t = 0, MAX_LOOKAHEAD, STEP do
+            for t = 0, GKSettings.Lookahead, STEP do
                 local dt = STEP
                 v = v + g * dt
                 p = p + v * dt
@@ -1178,21 +1227,25 @@ AdvancedGKSection:Toggle({
 
             local ball, bp, bv = GetBallData()
             if not ball or not bp then return end
+            
+            -- If buttons are missing, try to find them once
+            if not leftBtn or not rightBtn then
+                leftBtn, rightBtn = findButtonsLocal()
+            end
 
             local landing = predictLanding(bp, bv) or bp
-            local heading, landingPos = isBallHeadingToGoal(ball, bv, 2.8)
+            local heading, landingPos = isBallHeadingToGoal(ball, bv, GKSettings.Lookahead + 0.3)
             local char = LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if not root then return end
 
             local dist = (root.Position - (landingPos or landing)).Magnitude
             
-            -- 7v7 режим: более агрессивная реакция на все удары
             if heading then
-                -- Если мяч идет в ворота - реагируем даже издалека
-                if dist <= FAR_DISTANCE then
+                -- Ball heading to goal
+                if dist <= GKSettings.FarDist then
                     local now2 = tick()
-                    if now2 - lastDive < DIVE_COOLDOWN then return end
+                    if now2 - lastDive < GKSettings.Cooldown then return end
                     
                     local localPos = root.CFrame:PointToObjectSpace(landingPos or landing)
                     if localPos.X < 0 then
@@ -1203,10 +1256,10 @@ AdvancedGKSection:Toggle({
                     lastDive = now2
                 end
             else
-                -- Даже если не идет в ворота - реагируем на близкие удары
-                if dist <= CLOSE_DISTANCE then
+                -- Not heading to goal, but close
+                if dist <= GKSettings.CloseDist then
                     local now2 = tick()
-                    if now2 - lastDive < DIVE_COOLDOWN then return end
+                    if now2 - lastDive < GKSettings.Cooldown then return end
                     
                     local localPos = root.CFrame:PointToObjectSpace(landing)
                     if localPos.X < 0 then
