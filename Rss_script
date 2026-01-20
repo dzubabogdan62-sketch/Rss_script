@@ -12,73 +12,25 @@ local Ball = nil
 local RSSHitbox = nil
 getgenv().InfiniteStaminaEnabled = false
 
-local function CreateHitbox()
-    if RSSHitbox then RSSHitbox:Destroy() end
-    RSSHitbox = Instance.new("Folder")
-    RSSHitbox.Name = "RSSHitbox"
-    RSSHitbox.Parent = Workspace
-
-    -- Outer ring (subtle)
-    local outer = Instance.new("BoxHandleAdornment")
-    outer.Name = "Outer"
-    outer.AlwaysOnTop = false
-    outer.ZIndex = 1
-    outer.Color3 = Color3.fromRGB(0, 150, 255)
-    outer.Transparency = 1
-    outer.Size = HitboxSize * 1.15
-    outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    outer.Parent = RSSHitbox
-
-    -- Inner core (more visible)
-    local core = Instance.new("BoxHandleAdornment")
-    core.Name = "Core"
-    core.AlwaysOnTop = true
-    core.ZIndex = 2
-    core.Color3 = Color3.fromRGB(0, 255, 100)
-    core.Transparency = 1
-    core.Size = HitboxSize
-    core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    core.Parent = RSSHitbox
-
-    -- Pulse helper to animate when visible
-    local pulse = Instance.new("BoolValue")
-    pulse.Name = "Pulse"
-    pulse.Value = false
-    pulse.Parent = RSSHitbox
-end
-
-local function UpdateHitbox()
-    if not RSSHitbox or not RSSHitbox.Parent then return end
-
-    local outer = RSSHitbox:FindFirstChild("Outer")
-    local core = RSSHitbox:FindFirstChild("Core")
-
-    if outer then
-        outer.Size = HitboxSize * 1.15
-        outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    end
-
-    if core then
-        core.Size = HitboxSize
-        core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    end
-
-    local shouldShow = IsReachEnabled and IsVisualizerEnabled
-    if outer then outer.Transparency = shouldShow and 0.85 or 1 end
-    if core then core.Transparency = shouldShow and 0.55 or 1 end
-end
-
-local function GetRoot() 
-    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-end
+-- Optimization: Cached objects
+local _CachedBall = nil
+local _CachedGoalBounds = nil
+local _LastBallSearch = 0
 
 local function FindBall()
-    -- Robust ball finder: checks common names and models, returns a BasePart representing the ball
+    local now = tick()
+    if _CachedBall and _CachedBall.Parent and now - _LastBallSearch < 0.5 then
+        return _CachedBall
+    end
+    _LastBallSearch = now
+
+    -- Robust ball finder: checks common names and models
     local function firstPartFromModel(m)
         if not m then return nil end
         if m:IsA("BasePart") then return m end
         if m.PrimaryPart and m.PrimaryPart:IsA("BasePart") then return m.PrimaryPart end
-        for _, c in ipairs(m:GetDescendants()) do
+        -- Search children instead of descendants for speed
+        for _, c in ipairs(m:GetChildren()) do
             if c:IsA("BasePart") then return c end
         end
         return nil
@@ -86,17 +38,28 @@ local function FindBall()
 
     local names = {"ball", "Ball", "PSoccerBall", "TPS", "SoccerBall"}
     for _, name in ipairs(names) do
-        local found = Workspace:FindFirstChild(name, true)
+        -- Search in Workspace children first (faster than recursive)
+        local found = Workspace:FindFirstChild(name)
         if found then
             local part = firstPartFromModel(found)
-            if part then return part end
+            if part then 
+                _CachedBall = part
+                return part 
+            end
         end
     end
 
-    -- fallback: search for a floating spherical part with expected size
-    for _, part in ipairs(Workspace:GetDescendants()) do
-        if part:IsA("BasePart") and (part.Shape == Enum.PartType.Ball or (part.Mesh and string.find(string.lower(part.Name), "ball") )) then
-            return part
+    -- If not found, do a more expensive search but rarely
+    if now - _LastBallSearch > 2 then
+        for _, name in ipairs(names) do
+            local found = Workspace:FindFirstChild(name, true)
+            if found then
+                local part = firstPartFromModel(found)
+                if part then 
+                    _CachedBall = part
+                    return part 
+                end
+            end
         end
     end
 
@@ -111,20 +74,29 @@ local function GetBallData()
     local vel = Vector3.new()
     pcall(function()
         pos = b.Position
-        vel = b.AssemblyLinearVelocity or (b:IsA("BasePart") and b.Velocity) or Vector3.new()
+        vel = b.AssemblyLinearVelocity or b.Velocity or Vector3.new()
     end)
     return b, pos, vel
 end
 
 -- Find goal-related parts and compute an axis-aligned bounding box covering them
 local function findGoalBounds()
+    if _CachedGoalBounds then return _CachedGoalBounds end
+
     local candidates = {}
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            local lname = string.lower(obj.Name)
-            if string.find(lname, "goal") or string.find(lname, "net") or string.find(lname, "post") or string.find(lname, "goalzone") or string.find(lname, "goalarea") then
-                table.insert(candidates, obj)
+    -- Optimization: Search likely folders first
+    local folders = {Workspace:FindFirstChild("Map"), Workspace:FindFirstChild("Goals"), Workspace}
+    for _, parent in ipairs(folders) do
+        if parent then
+            for _, obj in ipairs(parent:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    local lname = string.lower(obj.Name)
+                    if string.find(lname, "goal") or string.find(lname, "net") or string.find(lname, "post") or string.find(lname, "goalzone") then
+                        table.insert(candidates, obj)
+                    end
+                end
             end
+            if #candidates > 0 then break end
         end
     end
 
@@ -140,7 +112,8 @@ local function findGoalBounds()
         minV = Vector3.new(math.min(minV.X, a.X), math.min(minV.Y, a.Y), math.min(minV.Z, a.Z))
         maxV = Vector3.new(math.max(maxV.X, b.X), math.max(maxV.Y, b.Y), math.max(maxV.Z, b.Z))
     end
-    return {min = minV, max = maxV}
+    _CachedGoalBounds = {min = minV, max = maxV}
+    return _CachedGoalBounds
 end
 
 local function isPointInBounds(pt, bounds)
@@ -184,27 +157,23 @@ local function ReachLoop()
     if not ball or not ball.Position then return end
 
     local effectiveReach = math.max(HitboxSize.X, HitboxSize.Y, HitboxSize.Z) * 0.6
+    local dist = (ball.Position - root.Position).Magnitude
 
-    if (ball.Position - root.Position).Magnitude <= effectiveReach then
-        -- only touch a few key parts to reduce anti-cheat noise
-        local partsToTouch = {}
+    if dist <= effectiveReach then
+        -- Optimization: cache char and parts
         local char = LocalPlayer.Character
-        if char then
-            for _, name in ipairs({"LeftHand","RightHand","LeftFoot","RightFoot","HumanoidRootPart","LowerTorso"}) do
-                local p = char:FindFirstChild(name)
-                if p and p:IsA("BasePart") then table.insert(partsToTouch, p) end
-            end
-            if #partsToTouch == 0 then
-                for _, p in ipairs(char:GetChildren()) do if p:IsA("BasePart") then table.insert(partsToTouch, p) end end
-            end
-        end
+        if not char then return end
 
-        for _, part in ipairs(partsToTouch) do
-            pcall(function()
-                firetouchinterest(part, ball, 0)
-                task.wait(0.012)
-                firetouchinterest(part, ball, 1)
-            end)
+        -- Only trigger touch if close enough to minimize firetouchinterest calls
+        local partsToTouch = {"LeftHand","RightHand","LeftFoot","RightFoot","HumanoidRootPart"}
+        for _, name in ipairs(partsToTouch) do
+            local p = char:FindFirstChild(name)
+            if p and p:IsA("BasePart") then
+                pcall(function()
+                    firetouchinterest(p, ball, 0)
+                    firetouchinterest(p, ball, 1)
+                end)
+            end
         end
     end
 end
@@ -792,17 +761,8 @@ PredictSection:Toggle({
             local ballCheckInterval = 1
 
             local function getBall()
-                local now = tick()
-                if cachedBall and cachedBall.Parent and now - lastBallCheck < ballCheckInterval then
-                    return cachedBall
-                end
-                
-                lastBallCheck = now
-                cachedBall = Workspace:FindFirstChild("TPS", true) 
-                    or Workspace:FindFirstChild("PSoccerBall", true)
-                    or Workspace:FindFirstChild("ball", true)
-                
-                return cachedBall
+                -- Use the global GetBallData for consistency and caching
+                return GetBallData()
             end
 
             curveFolder = Instance.new("Folder")
@@ -1038,30 +998,42 @@ local wasPredictorEnabled = false
 
 local function disableEffects()
     savedStates = {particles = {}, trails = {}, beams = {}, lights = {}}
+    -- Only check descendants of Map or common folders if possible, otherwise use a throttled approach
+    local count = 0
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        pcall(function()
-            if obj:IsA("ParticleEmitter") then
-                savedStates.particles[obj] = obj.Enabled
-                obj.Enabled = false
-            elseif obj:IsA("Trail") then
-                savedStates.trails[obj] = obj.Enabled
-                obj.Enabled = false
-            elseif obj:IsA("Beam") then
-                savedStates.beams[obj] = obj.Enabled
-                obj.Enabled = false
-            elseif obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight") then
-                savedStates.lights[obj] = obj.Enabled
-                obj.Enabled = false
-            end
-        end)
-    end
+        count = count + 1
+        if count % 100 == 0 then task.wait() end -- prevent frame hang
 
-    -- attempt to reduce Lighting costs
+        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Light") then
+            pcall(function()
+                if obj:IsA("ParticleEmitter") then
+                    savedStates.particles[obj] = obj.Enabled
+                    obj.Enabled = false
+                elseif obj:IsA("Trail") then
+                    savedStates.trails[obj] = obj.Enabled
+                    obj.Enabled = false
+                elseif obj:IsA("Beam") then
+                    savedStates.beams[obj] = obj.Enabled
+                    obj.Enabled = false
+                elseif obj:IsA("Light") then
+                    savedStates.lights[obj] = obj.Enabled
+                    obj.Enabled = false
+                end
+            end)
+        end
+    end
+    
+    -- Lighting optimization
     pcall(function()
         local Lighting = game:GetService("Lighting")
-        savedStates.lighting = {GlobalShadows = Lighting.GlobalShadows, Brightness = Lighting.Brightness}
+        savedStates.lighting = {
+            GlobalShadows = Lighting.GlobalShadows, 
+            Brightness = Lighting.Brightness,
+            FogEnd = Lighting.FogEnd
+        }
         Lighting.GlobalShadows = false
-        Lighting.Brightness = math.max(0.5, Lighting.Brightness * 0.5)
+        Lighting.Brightness = 2
+        Lighting.FogEnd = 1e5
     end)
 end
 
@@ -1075,9 +1047,11 @@ local function restoreEffects()
             local Lighting = game:GetService("Lighting")
             Lighting.GlobalShadows = savedStates.lighting.GlobalShadows
             Lighting.Brightness = savedStates.lighting.Brightness
+            Lighting.FogEnd = savedStates.lighting.FogEnd
         end)
     end
     savedStates = {}
+end
 end
 
 local function ApplyOptimizations(enable)
@@ -1252,3 +1226,63 @@ AdvancedGKSection:Toggle({
         end)
     end
 })
+
+local function CreateHitbox()
+    if RSSHitbox then RSSHitbox:Destroy() end
+    RSSHitbox = Instance.new("Folder")
+    RSSHitbox.Name = "RSSHitbox"
+    RSSHitbox.Parent = Workspace
+
+    -- Outer ring (subtle)
+    local outer = Instance.new("BoxHandleAdornment")
+    outer.Name = "Outer"
+    outer.AlwaysOnTop = false
+    outer.ZIndex = 1
+    outer.Color3 = Color3.fromRGB(0, 150, 255)
+    outer.Transparency = 1
+    outer.Size = HitboxSize * 1.15
+    outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    outer.Parent = RSSHitbox
+
+    -- Inner core (more visible)
+    local core = Instance.new("BoxHandleAdornment")
+    core.Name = "Core"
+    core.AlwaysOnTop = true
+    core.ZIndex = 2
+    core.Color3 = Color3.fromRGB(0, 255, 100)
+    core.Transparency = 1
+    core.Size = HitboxSize
+    core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    core.Parent = RSSHitbox
+
+    -- Pulse helper to animate when visible
+    local pulse = Instance.new("BoolValue")
+    pulse.Name = "Pulse"
+    pulse.Value = false
+    pulse.Parent = RSSHitbox
+end
+
+local function UpdateHitbox()
+    if not RSSHitbox or not RSSHitbox.Parent then return end
+
+    local outer = RSSHitbox:FindFirstChild("Outer")
+    local core = RSSHitbox:FindFirstChild("Core")
+
+    if outer then
+        outer.Size = HitboxSize * 1.15
+        outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    end
+
+    if core then
+        core.Size = HitboxSize
+        core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    end
+
+    local shouldShow = IsReachEnabled and IsVisualizerEnabled
+    if outer then outer.Transparency = shouldShow and 0.85 or 1 end
+    if core then core.Transparency = shouldShow and 0.55 or 1 end
+end
+
+local function GetRoot() 
+    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+end
