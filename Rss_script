@@ -20,6 +20,8 @@ local Config = {
         Lookahead = 2.5,
         Cooldown = 0.5,
         AutoDive = false,
+        AutoPosition = false, -- New
+        PositionDist = 6,     -- New
         CurveStrength = 0.5 -- Default curve multiplier
     },
     Player = {
@@ -714,8 +716,87 @@ local GKSettings = {
     FarDist = Config.GK.FarDist,
     Lookahead = Config.GK.Lookahead,
     Cooldown = Config.GK.Cooldown,
-    CurveStrength = Config.GK.CurveStrength
+    CurveStrength = Config.GK.CurveStrength,
+    AutoPosition = Config.GK.AutoPosition,
+    PositionDist = Config.GK.PositionDist
 }
+
+-- Auto Positioning Helper
+local DefendedGoalCenter = nil
+
+local function FindDefendedGoal()
+    local root = GetRoot()
+    if not root then return nil end
+    
+    local candidates = {}
+    local folders = {Workspace:FindFirstChild("Map"), Workspace:FindFirstChild("Goals")}
+    
+    -- Gather all goal-like parts
+    for _, parent in ipairs(folders) do
+        if parent then
+            for _, obj in ipairs(parent:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    local lname = string.lower(obj.Name)
+                    if string.find(lname, "goal") or string.find(lname, "net") or string.find(lname, "post") or string.find(lname, "goalzone") then
+                        table.insert(candidates, obj)
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Fallback search
+    if #candidates == 0 then
+         for _, obj in ipairs(Workspace:GetChildren()) do
+             if obj:IsA("Model") and (string.find(string.lower(obj.Name), "goal") or string.find(string.lower(obj.Name), "map")) then
+                 for _, child in ipairs(obj:GetDescendants()) do
+                     if child:IsA("BasePart") then table.insert(candidates, child) end
+                 end
+             end
+         end
+    end
+    
+    if #candidates == 0 then return nil end
+
+    -- Cluster candidates by distance to player to find the "nearest goal structure"
+    -- We assume the goal parts are clustered together (posts, net, etc.)
+    local closestPart = nil
+    local minDst = math.huge
+    
+    for _, p in ipairs(candidates) do
+        local d = (p.Position - root.Position).Magnitude
+        if d < minDst then
+            minDst = d
+            closestPart = p
+        end
+    end
+    
+    if not closestPart then return nil end
+    
+    -- Now find all parts close to this closest part (e.g. within 30 studs) to form the "Defended Goal"
+    local goalParts = {}
+    for _, p in ipairs(candidates) do
+        if (p.Position - closestPart.Position).Magnitude < 30 then
+            table.insert(goalParts, p)
+        end
+    end
+    
+    -- Calculate center of this specific goal
+    local minV = Vector3.new(1e9,1e9,1e9)
+    local maxV = Vector3.new(-1e9,-1e9,-1e9)
+    for _, p in ipairs(goalParts) do
+        local size = p.Size * 0.5
+        local cpos = p.Position
+        local a = cpos - size
+        local b = cpos + size
+        minV = Vector3.new(math.min(minV.X, a.X), math.min(minV.Y, a.Y), math.min(minV.Z, a.Z))
+        maxV = Vector3.new(math.max(maxV.X, b.X), math.max(maxV.Y, b.Y), math.max(maxV.Z, b.Z))
+    end
+    
+    local center = (minV + maxV) / 2
+    -- Adjust center Y to be ground level-ish if needed, but for positioning X/Z matters most
+    return center
+end
 
 -- UI Construction
 local Window = WindUI:CreateWindow({
@@ -907,8 +988,46 @@ GKMain:Toggle({
         end
 
         local lastAutoGKV2Check = 0
+        local lastPosUpdate = 0
+        
         getgenv().AutoGKV2Connection = RunService.Heartbeat:Connect(function()
             local now = tick()
+            
+            -- Auto Positioning Logic (runs every frame but with checks)
+            if GKSettings.AutoPosition and LocalPlayer.Character then
+                local hum = LocalPlayer.Character:FindFirstChild("Humanoid")
+                local root = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                
+                -- Only update position if not diving (cooldown check approx)
+                if hum and root and now - lastDive > 0.6 then 
+                     -- Determine Defended Goal (update occasionally or if nil)
+                     if not DefendedGoalCenter or now - lastPosUpdate > 5 then
+                         DefendedGoalCenter = FindDefendedGoal()
+                         lastPosUpdate = now
+                     end
+                     
+                     if DefendedGoalCenter then
+                         local ball = FindBall()
+                         local ballPos = ball and ball.Position or Vector3.new(0,0,0)
+                         
+                         -- Calculate target position: Point on line from Goal to Ball, at Distance
+                         local goalPosFlat = Vector3.new(DefendedGoalCenter.X, root.Position.Y, DefendedGoalCenter.Z)
+                         local ballPosFlat = Vector3.new(ballPos.X, root.Position.Y, ballPos.Z)
+                         local dir = (ballPosFlat - goalPosFlat).Unit
+                         
+                         -- Fallback if ball is inside goal or weird math
+                         if (ballPosFlat - goalPosFlat).Magnitude < 0.1 then dir = Vector3.new(0,0,-1) end
+                         
+                         local targetPos = goalPosFlat + dir * (GKSettings.PositionDist or 6)
+                         
+                         -- Move if far enough
+                         if (targetPos - root.Position).Magnitude > 1.5 then
+                             hum:MoveTo(targetPos)
+                         end
+                     end
+                end
+            end
+            
             if now - lastAutoGKV2Check < 0.05 then return end 
             lastAutoGKV2Check = now
 
@@ -973,6 +1092,17 @@ GKMain:Toggle({
     end
 })
 
+GKMain:Toggle({
+    Title = "Auto Positioning",
+    Desc = "Walks to optimal GK spot automatically",
+    Default = Config.GK.AutoPosition,
+    Callback = function(v) 
+        Config.GK.AutoPosition = v
+        GKSettings.AutoPosition = v 
+        if v then DefendedGoalCenter = FindDefendedGoal() end
+    end
+})
+
 GKMain:Dropdown({
     Title = "Game Mode",
     Multi = false,
@@ -1011,6 +1141,13 @@ local GKTuningTab = Window:Tab({ Title = "GK Tuning", Icon = "sliders" })
 
 local GKDistances = GKTuningTab:Section({ Title = "Distance Settings" })
 GKDistances:Slider({
+    Title = "Positioning Distance",
+    Desc = "Dist from goal line to stand",
+    Step = 0.5,
+    Value = {Min = 2, Max = 15, Default = Config.GK.PositionDist},
+    Callback = function(v) Config.GK.PositionDist = v; GKSettings.PositionDist = v end
+})
+GKDistances:Slider({
     Title = "Close Distance",
     Step = 1,
     Value = {Min = 5, Max = 30, Default = Config.GK.CloseDist},
@@ -1043,6 +1180,8 @@ GKPhysics:Slider({
     Value = {Min = 0, Max = 2, Default = Config.GK.CurveStrength},
     Callback = function(v) Config.GK.CurveStrength = v; GKSettings.CurveStrength = v end
 })
+
+
 
 -- [TAB 4] Visuals (New)
 local VisualsTab = Window:Tab({ Title = "Visuals", Icon = "eye" })
@@ -1232,6 +1371,8 @@ VisualAssists:Toggle({
         end
     end
 })
+
+
 
 local PredictSection = VisualsTab:Section({ Title = "Ball Trajectory" })
 local predictionConnection = nil
