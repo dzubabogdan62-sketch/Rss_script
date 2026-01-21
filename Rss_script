@@ -248,6 +248,9 @@ end
 -- Find goal-related parts and compute an axis-aligned bounding box covering them
 local function findGoalBounds()
     if _CachedGoalBounds then return _CachedGoalBounds end
+    
+    local root = GetRoot()
+    if not root then return nil end
 
     local candidates = {}
     -- Optimization: Search likely folders first
@@ -288,9 +291,34 @@ local function findGoalBounds()
 
     if #candidates == 0 then return nil end
 
+    -- FIX: Only consider parts belonging to the CLOSEST goal structure
+    -- 1. Find the part closest to the player
+    local closestPart = nil
+    local minDst = math.huge
+    local pPos = root.Position
+    
+    for _, p in ipairs(candidates) do
+        local d = (p.Position - pPos).Magnitude
+        if d < minDst then
+            minDst = d
+            closestPart = p
+        end
+    end
+
+    if not closestPart then return nil end
+
+    -- 2. Filter candidates to only include parts near the closest part (e.g. within 40 studs)
+    -- This separates our defended goal from the opponent's goal
+    local goalParts = {}
+    for _, p in ipairs(candidates) do
+        if (p.Position - closestPart.Position).Magnitude < 40 then
+            table.insert(goalParts, p)
+        end
+    end
+
     local minV = Vector3.new(1e9,1e9,1e9)
     local maxV = Vector3.new(-1e9,-1e9,-1e9)
-    for _, p in ipairs(candidates) do
+    for _, p in ipairs(goalParts) do
         local size = p.Size * 0.5
         local cpos = p.Position
         local a = cpos - size
@@ -1133,7 +1161,7 @@ GKMain:Toggle({
                 end
             else
                 -- Close range panic check (fallback)
-                if bp and bv and (root.Position - bp).Magnitude < GKSettings.CloseDist and bvMagnitude > 10 then
+                if bp and bv and (root.Position - bp).Magnitude < GKSettings.CloseDist and bv.Magnitude > 10 then
                     local now2 = tick()
                     if now2 - lastDive < GKSettings.Cooldown then return end
                     
