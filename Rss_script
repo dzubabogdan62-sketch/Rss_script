@@ -1,6 +1,7 @@
 ---@diagnostic disable: undefined-global, undefined-field, deprecated
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
@@ -477,19 +478,38 @@ end
 
 local function tryClick(btn)
     if not btn then return end
+    
+    -- Method 1: VirtualInputManager (Best for simulation)
     pcall(function()
-        if getconnections then
-            local ok, conns = pcall(getconnections, btn.MouseButton1Click)
-            if ok and type(conns) == 'table' and #conns > 0 and type(conns[1].Fire) == 'function' then
-                conns[1]:Fire()
-                return
-            end
-        end
-
-        if btn.MouseButton1Click and type(btn.MouseButton1Click.Fire) == 'function' then
-            btn.MouseButton1Click:Fire()
+        local vim = game:GetService("VirtualInputManager")
+        if vim then
+            local pos = btn.AbsolutePosition
+            local size = btn.AbsoluteSize
+            local center = pos + size * 0.5
+            vim:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
+            task.wait()
+            vim:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
         end
     end)
+
+    -- Method 2: Fire events directly (Exploit standard)
+    pcall(function()
+        if getconnections then
+            for _, sig in ipairs({btn.MouseButton1Click, btn.MouseButton1Down, btn.Activated}) do
+                 local ok, conns = pcall(getconnections, sig)
+                 if ok and conns then
+                     for _, c in ipairs(conns) do
+                         if c.Function then pcall(c.Function) end
+                         if c.Fire then pcall(c.Fire, c) end
+                     end
+                 end
+            end
+        end
+    end)
+    
+    -- Method 3: Fallback events
+    pcall(function() btn.Activated:Fire() end)
+    pcall(function() btn.MouseButton1Click:Fire() end)
 end
 
 -- Find the main jump button (for Space equivalents) on mobile
@@ -859,6 +879,7 @@ local Window = WindUI:CreateWindow({
     Author = "Made By VETA",
     Folder = "RSSVETA",
 })
+pcall(function() Window:SetToggleKey(Enum.KeyCode.RightControl) end)
 
 -- [TAB 1] Reach
 local ReachTab = Window:Tab({ Title = "Reach", Icon = "sword" })
@@ -1842,6 +1863,73 @@ function CreateMainUI()
             Content = "Main UI initialized",
             Duration = 2,
         })
+    end)
+end
+
+-- Mobile Toggle Button
+if UserInputService.TouchEnabled then
+    pcall(function()
+        local gui = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("RSSToggleGUI")
+        if gui then gui:Destroy() end
+        
+        gui = Instance.new("ScreenGui")
+        gui.Name = "RSSToggleGUI"
+        gui.ResetOnSpawn = false
+        gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+        
+        local btn = Instance.new("TextButton")
+        btn.Name = "ToggleBtn"
+        btn.Size = UDim2.fromOffset(50, 50)
+        btn.Position = UDim2.new(0.9, -60, 0.2, 0)
+        btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.Text = "UI"
+        btn.TextSize = 18
+        btn.Font = Enum.Font.GothamBold
+        btn.BorderSizePixel = 0
+        btn.AutoButtonColor = true
+        btn.Parent = gui
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 10)
+        corner.Parent = btn
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.new(1,1,1)
+        stroke.Thickness = 2
+        stroke.Parent = btn
+        
+        -- Dragging
+        local dragging, dragStart, startPos
+        btn.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true
+                dragStart = input.Position
+                startPos = btn.Position
+            end
+        end)
+        
+        btn.InputChanged:Connect(function(input)
+            if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+                local delta = input.Position - dragStart
+                btn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            end
+        end)
+        
+        btn.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = false
+            end
+        end)
+        
+        btn.MouseButton1Click:Connect(function()
+             local vim = game:GetService("VirtualInputManager")
+             if vim then
+                 vim:SendKeyEvent(true, Enum.KeyCode.RightControl, false, game)
+                 task.wait()
+                 vim:SendKeyEvent(false, Enum.KeyCode.RightControl, false, game)
+             end
+        end)
     end)
 end
 
