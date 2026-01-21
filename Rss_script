@@ -640,23 +640,9 @@ local function doDive(keyStr)
     -- If mobile buttons were not found, there's nothing to do on this device.
 end
 
-local function loadWindUI()
-    local urls = {
-        "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
-        "https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/dist/main.lua",
-        "https://tree-hub.vercel.app/api/UI/WindUI"
-    }
-    for _, url in ipairs(urls) do
-        local success, lib = pcall(function() return loadstring(game:HttpGet(url))() end)
-        if success and lib then return lib end
-    end
-    return nil
-end
-
-local WindUI = loadWindUI()
+local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
 if not WindUI then 
     warn("WindUI Failed to Load")
-    pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Error", Text = "WindUI Failed to Load"}) end)
     return 
 end
 
@@ -1840,32 +1826,15 @@ end)
 
 Window:SelectTab(1)
 
-local Dialog = Window:Dialog({
-    Icon = "bird",
-    Title = "Hey!",
-    Content = "Report To Our Discord If You Found Bugs/Glitches",
-    Buttons = {
-        {
-            Title = "Continue",
-            Callback = function()
-                if type(CreateMainUI) == "function" then
-                    pcall(CreateMainUI)
-                end
-            end
-        }
-    }
-})
-
-function CreateMainUI()
-    pcall(function()
-        WindUI:Notify({
-            Title = "UI",
-            Icon = "check",
-            Content = "Main UI initialized",
-            Duration = 2,
-        })
-    end)
-end
+-- Startup notification
+pcall(function()
+    WindUI:Notify({
+        Title = "UI",
+        Icon = "check",
+        Content = "Main UI initialized",
+        Duration = 2,
+    })
+end)
 
 -- Mobile Toggle Button
 if UserInputService.TouchEnabled then
