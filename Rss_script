@@ -6,6 +6,25 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
+local CollectionService = game:GetService("CollectionService")
+
+-- Tagging functions for optimization
+local function AddTag(obj, tag)
+    if obj and not CollectionService:HasTag(obj, tag) then
+        CollectionService:AddTag(obj, tag)
+    end
+end
+
+local function RemoveTag(obj, tag)
+    if obj and CollectionService:HasTag(obj, tag) then
+        CollectionService:RemoveTag(obj, tag)
+    end
+end
+
+local function GetTagged(tag)
+    return CollectionService:GetTagged(tag)
+end
+
 -- Configuration Management
 local Config = {
     Reach = {
@@ -22,7 +41,8 @@ local Config = {
         AutoDive = false,
         AutoPosition = false, -- New
         PositionDist = 6,     -- New
-        CurveStrength = 0.5 -- Default curve multiplier
+        CurveStrength = 0.5, -- Default curve multiplier
+        SpinInfluence = 0.1   -- How much spin affects trajectory
     },
     Player = {
         WalkSpeed = 16,
@@ -51,19 +71,25 @@ local function SaveConfig()
     end
 end
 
+local function deepMerge(t1, t2)
+    for k, v in pairs(t2) do
+        if type(v) == "table" and type(t1[k]) == "table" then
+            deepMerge(t1[k], v)
+        else
+            t1[k] = v
+        end
+    end
+    return t1
+end
+
 local function LoadConfig()
     if isfile and isfile(ConfigFileName) then
         pcall(function()
             local content = readfile(ConfigFileName)
             local decoded = HttpService:JSONDecode(content)
             
-            -- Merge decoded into Config (shallow merge for categories)
-            for cat, data in pairs(decoded) do
-                if Config[cat] then
-                    for k, v in pairs(data) do
-                        Config[cat][k] = v
-                    end
-                end
+            if decoded then
+                Config = deepMerge(Config, decoded)
             end
         end)
         return true
@@ -85,60 +111,62 @@ local _CachedBall = nil
 local _CachedGoalBounds = nil
 local _LastBallSearch = 0
 
-local function CreateHitbox()
-    if RSSHitbox then RSSHitbox:Destroy() end
-    RSSHitbox = Instance.new("Folder")
-    RSSHitbox.Name = "RSSHitbox"
-    RSSHitbox.Parent = Workspace
+local function CreateOrUpdateHitbox()
+    if not RSSHitbox or not RSSHitbox.Parent then
+        if RSSHitbox then RSSHitbox:Destroy() end
+        RSSHitbox = Instance.new("Folder")
+        RSSHitbox.Name = "RSSHitbox"
+        RSSHitbox.Parent = Workspace
 
-    -- Outer ring (subtle)
-    local outer = Instance.new("BoxHandleAdornment")
-    outer.Name = "Outer"
-    outer.AlwaysOnTop = false
-    outer.ZIndex = 1
-    outer.Color3 = Color3.fromRGB(0, 150, 255)
-    outer.Transparency = 1
-    outer.Size = HitboxSize * 1.15
-    outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    outer.Parent = RSSHitbox
+        local outer = Instance.new("BoxHandleAdornment")
+        outer.Name = "Outer"
+        outer.AlwaysOnTop = false
+        outer.ZIndex = 1
+        outer.Color3 = Color3.fromRGB(0, 150, 255)
+        outer.Parent = RSSHitbox
 
-    -- Inner core (more visible)
-    local core = Instance.new("BoxHandleAdornment")
-    core.Name = "Core"
-    core.AlwaysOnTop = true
-    core.ZIndex = 2
-    core.Color3 = Color3.fromRGB(0, 255, 100)
-    core.Transparency = 1
-    core.Size = HitboxSize
-    core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    core.Parent = RSSHitbox
+        local core = Instance.new("BoxHandleAdornment")
+        core.Name = "Core"
+        core.AlwaysOnTop = true
+        core.ZIndex = 2
+        core.Color3 = Color3.fromRGB(0, 255, 100)
+        core.Parent = RSSHitbox
+    end
 
-    -- Pulse helper to animate when visible
-    local pulse = Instance.new("BoolValue")
-    pulse.Name = "Pulse"
-    pulse.Value = false
-    pulse.Parent = RSSHitbox
-end
-
-local function UpdateHitbox()
-    if not RSSHitbox or not RSSHitbox.Parent then return end
-
+    local root = GetRoot()
     local outer = RSSHitbox:FindFirstChild("Outer")
     local core = RSSHitbox:FindFirstChild("Core")
 
     if outer then
         outer.Size = HitboxSize * 1.15
-        outer.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        outer.Adornee = root
     end
 
     if core then
         core.Size = HitboxSize
-        core.Adornee = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        core.Adornee = root
     end
 
     local shouldShow = IsReachEnabled and IsVisualizerEnabled
     if outer then outer.Transparency = shouldShow and 0.5 or 1 end
     if core then core.Transparency = shouldShow and 0.3 or 1 end
+end
+
+local function FindBallCS()
+    local tagged = GetTagged("GameBall")
+    if tagged and #tagged > 0 then
+        local ball = tagged[1]
+        if ball and ball:IsA("BasePart") and ball.Parent then
+            return ball
+        end
+    end
+
+    -- Fallback to old finder and tag the ball for next time
+    local ball = FindBallCS()
+    if ball then
+        AddTag(ball, "GameBall")
+    end
+    return ball
 end
 
 local function GetRoot() 
@@ -344,7 +372,7 @@ end
 local function EnableReach()
     if ReachConnection then return end
     IsReachEnabled = true
-    UpdateHitbox()
+    CreateOrUpdateHitbox()
     ReachConnection = RunService.Heartbeat:Connect(ReachLoop)
 end
 
@@ -354,7 +382,7 @@ local function DisableReach()
         ReachConnection = nil 
     end
     IsReachEnabled = false
-    UpdateHitbox()
+    CreateOrUpdateHitbox()
 end
 
 local speeds = nil
@@ -378,14 +406,12 @@ SetupStamina()
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(2)
     SetupStamina()
-    CreateHitbox()
-    UpdateHitbox()
+    CreateOrUpdateHitbox()
 end)
 
 if LocalPlayer.Character then
     task.wait(1)
-    CreateHitbox()
-    UpdateHitbox()
+    CreateOrUpdateHitbox()
 end
 
 -- Safe helpers for mobile dive buttons and firing them
@@ -526,18 +552,21 @@ local function calculateDiveDirection(landingPos)
 end
 
 -- Execute dive: mobile-first (buttons), fallback to PC virtual keys if available
+local leftBtn, rightBtn, jumpBtn
 local function doDive(keyStr)
     if not keyStr then return end
     
+    if not leftBtn or not rightBtn or not jumpBtn then
+        leftBtn, rightBtn = safeFindDiveButtons()
+        jumpBtn = safeFindJumpButton()
+    end
+
     -- normalize
     keyStr = tostring(keyStr)
     local parts = {}
     for token in string.gmatch(keyStr, "[^%+]+") do table.insert(parts, token:match("^%s*(.-)%s*$")) end
 
     -- try mobile
-    local leftBtn, rightBtn = safeFindDiveButtons()
-    local jumpBtn = safeFindJumpButton()
-
     local function mobilePress(k)
         if k == "E" then tryClick(rightBtn)
         elseif k == "Q" then tryClick(leftBtn)
@@ -697,7 +726,7 @@ local function ApplyOptimizations(enable)
     if enable and not OptimizationsApplied then
         disableEffects()
         IsVisualizerEnabled = false
-        UpdateHitbox()
+        CreateOrUpdateHitbox()
         OptimizationsApplied = true
         WindUI:Notify({Title = "Optimizer", Content = "Optimizations applied", Icon = "zap"})
     elseif not enable and OptimizationsApplied then
@@ -826,7 +855,7 @@ ReachMain:Toggle({
     Callback = function(v)
         Config.Reach.Visualizer = v
         IsVisualizerEnabled = v
-        UpdateHitbox()
+        CreateOrUpdateHitbox()
     end
 })
 
@@ -836,19 +865,19 @@ ReachSize:Slider({
     Title = "Size X",
     Step = 0.5,
     Value = {Min = 0.5, Max = 50, Default = Config.Reach.Size.X},
-    Callback = function(v) Config.Reach.Size.X = v; HitboxSize = Vector3.new(v, Config.Reach.Size.Y, Config.Reach.Size.Z); UpdateHitbox() end
+    Callback = function(v) Config.Reach.Size.X = v; HitboxSize = Vector3.new(v, Config.Reach.Size.Y, Config.Reach.Size.Z); CreateOrUpdateHitbox() end
 })
 ReachSize:Slider({
     Title = "Size Y",
     Step = 0.5,
     Value = {Min = 0.5, Max = 50, Default = Config.Reach.Size.Y},
-    Callback = function(v) Config.Reach.Size.Y = v; HitboxSize = Vector3.new(Config.Reach.Size.X, v, Config.Reach.Size.Z); UpdateHitbox() end
+    Callback = function(v) Config.Reach.Size.Y = v; HitboxSize = Vector3.new(Config.Reach.Size.X, v, Config.Reach.Size.Z); CreateOrUpdateHitbox() end
 })
 ReachSize:Slider({
     Title = "Size Z",
     Step = 0.5,
     Value = {Min = 0.5, Max = 50, Default = Config.Reach.Size.Z},
-    Callback = function(v) Config.Reach.Size.Z = v; HitboxSize = Vector3.new(Config.Reach.Size.X, Config.Reach.Size.Y, v); UpdateHitbox() end
+    Callback = function(v) Config.Reach.Size.Z = v; HitboxSize = Vector3.new(Config.Reach.Size.X, Config.Reach.Size.Y, v); CreateOrUpdateHitbox() end
 })
 
 -- [TAB 2] Auto GK (Main)
@@ -982,9 +1011,7 @@ GKMain:Toggle({
                 local hum = LocalPlayer.Character:FindFirstChild("Humanoid")
                 local root = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                 
-                -- Only update position if not diving (cooldown check approx)
                 if hum and root and now - lastDive > 0.6 then 
-                     -- Determine Defended Goal (update more frequently: 2s)
                      if not DefendedGoalCenter or now - lastPosUpdate > 2 then
                          local center, found = FindDefendedGoal()
                          if center then
@@ -992,7 +1019,6 @@ GKMain:Toggle({
                                  DefendedGoalCenter = center
                                  lastPosUpdate = now
                              elseif not DefendedGoalCenter then
-                                 -- Fallback: Use player position only if we have NO goal yet
                                  DefendedGoalCenter = center
                                  lastPosUpdate = now
                              end
@@ -1000,35 +1026,46 @@ GKMain:Toggle({
                      end
                      
                      if DefendedGoalCenter then
-                         local ball = FindBall()
-                         local ballPos = ball and ball.Position or Vector3.new(0,0,0)
+                         local ball, ballPos, ballVel, ballRot = GetBallData() -- Get rotational velocity
                          
-                         -- Calculate target position: Point on line from Goal to Ball, at Distance
-                         local goalPosFlat = Vector3.new(DefendedGoalCenter.X, root.Position.Y, DefendedGoalCenter.Z)
-                         local ballPosFlat = Vector3.new(ballPos.X, root.Position.Y, ballPos.Z)
-                         local dir = (ballPosFlat - goalPosFlat).Unit
-                         
-                         -- Fallback if ball is inside goal or weird math
-                         if (ballPosFlat - goalPosFlat).Magnitude < 0.1 then dir = Vector3.new(0,0,-1) end
-                         
-                         local targetPos = goalPosFlat + dir * (GKSettings.PositionDist or 6)
-                         
-                         -- Sensitivity check: Only MoveTo if target changed > 0.5 studs OR we are far from target (> 0.5)
-                        -- This prevents micro-stuttering but allows responsive movement
-                        local distToTarget = (targetPos - root.Position).Magnitude
-                        local targetDiff = (targetPos - lastMoveTarget).Magnitude
-                        
-                        if distToTarget > 0.5 then
-                            if targetDiff > 0.5 or (now - lastMoveTime > 0.2) then
-                                hum:MoveTo(targetPos)
-                                lastMoveTarget = targetPos
-                                lastMoveTime = now
-                                
-                                -- Face ball while walking
-                                local faceTarget = Vector3.new(ballPos.X, root.Position.Y, ballPos.Z)
-                                root.CFrame = CFrame.lookAt(root.Position, faceTarget)
-                            end
-                        end
+                         if ball and ballPos and ballVel and ballRot then
+                             local goalPos = DefendedGoalCenter
+                             local playerPos = root.Position
+                             
+                             -- Predict ball's future position
+                             local predictionTime = 0.2 
+                             local predictedBallPos = ballPos + ballVel * predictionTime
+                             
+                             -- Factor in ball spin (Magnus effect)
+                             local spinInfluence = GKSettings.SpinInfluence or 0.1
+                             if ballRot.Magnitude > 1 and ballVel.Magnitude > 1 then
+                                 -- Calculate side vector perpendicular to velocity
+                                 local sideVector = ballVel.Unit:Cross(Vector3.new(0, 1, 0)).Unit
+                                 -- Project spin onto the side vector
+                                 local spinForce = ballRot:Dot(sideVector)
+                                 -- Apply offset based on spin force and influence setting
+                                 local spinOffset = sideVector * spinForce * spinInfluence * predictionTime
+                                 predictedBallPos = predictedBallPos + spinOffset
+                             end
+
+                             -- Calculate the ideal position on the goal line
+                             local goalLineDir = (Vector3.new(goalPos.X, playerPos.Y, goalPos.Z) - playerPos).Unit
+                             local projectedBallPos = playerPos + goalLineDir * (predictedBallPos - playerPos):Dot(goalLineDir)
+                             
+                             -- Target position with curve
+                             local curveStrength = GKSettings.CurveStrength or 0.5
+                             local targetPos = goalPos:Lerp(projectedBallPos, curveStrength)
+                             
+                             -- Move the player
+                             local distToTarget = (targetPos - playerPos).Magnitude
+                             if distToTarget > 0.5 then
+                                 hum:MoveTo(targetPos)
+                                 
+                                 -- Face the ball
+                                 local faceTarget = Vector3.new(ballPos.X, playerPos.Y, ballPos.Z)
+                                 root.CFrame = CFrame.lookAt(playerPos, faceTarget)
+                             end
+                         end
                      end
                 end
             end
