@@ -275,7 +275,7 @@ local DIVE_CONFIG = {
     DIVE_COOLDOWN = 0.5,
     REACTION_TIME = 0.1,
     BALL_VELOCITY_THRESHOLD = 5,
-    ANTICIPATION = 0.15, -- Предсказание траектории
+    ANTICIPATION = 0.15,
 }
 
 local DiveSection = GkTab:Section({
@@ -286,9 +286,8 @@ DiveSection:Toggle({
     Title = "Включить Smart Auto Dive",
     Default = false,
     Callback = function(enabled)
-        DiveState.Enabled = enabled
-        
         if not enabled then
+            DiveState.Enabled = false
             if DiveState.Connection then
                 DiveState.Connection:Disconnect()
                 DiveState.Connection = nil
@@ -297,6 +296,7 @@ DiveSection:Toggle({
             return
         end
         
+        DiveState.Enabled = true
         pcall(function()
             local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
             local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
@@ -307,30 +307,36 @@ DiveSection:Toggle({
                 return
             end
             
-            -- Поиск кнопок
-            local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-            local mobileCTRL = playerGui:WaitForChild("MobileCTRL")
-            local touchControlFrame = mobileCTRL:WaitForChild("TouchControlFrame")
-            local jumpButton = touchControlFrame:WaitForChild("JumpButton")
-            local leftDiveButton = jumpButton:WaitForChild("LeftDive")
-            local rightDiveButton = jumpButton:WaitForChild("RightDive")
+            -- Поиск кнопок с правильной обработкой ошибок
+            local success, result = pcall(function()
+                local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
+                local mobileCTRL = playerGui:WaitForChild("MobileCTRL", 5)
+                local touchControlFrame = mobileCTRL:WaitForChild("TouchControlFrame", 5)
+                local jumpButton = touchControlFrame:WaitForChild("JumpButton", 5)
+                local leftDiveButton = jumpButton:WaitForChild("LeftDive", 5)
+                local rightDiveButton = jumpButton:WaitForChild("RightDive", 5)
+                
+                return {left = leftDiveButton, right = rightDiveButton}
+            end)
             
-            local diveButtonCache = {
-                left = leftDiveButton,
-                right = rightDiveButton,
-            }
+            if not success or not result then
+                Notify("Ошибка", "Не найдены кнопки dive!", "ban")
+                DiveState.Enabled = false
+                return
+            end
+            
+            local diveButtonCache = result
             
             local function FireDiveButton(button)
-                if not button then return end
-                local connections = getconnections(button.MouseButton1Click)
-                if connections and #connections > 0 then
-                    for _, conn in ipairs(connections) do
-                        conn:Fire()
+                if not button or not button.Parent then return end
+                pcall(function()
+                    local connections = getconnections(button.MouseButton1Click)
+                    if connections and #connections > 0 then
+                        connections[1]:Fire()
+                    else
+                        button.MouseButton1Click:Fire()
                     end
-                else
-                    button.MouseButton1Click:Fire()
-                end
-                task.wait(0.01)
+                end)
             end
             
             local lastBallPos = nil
@@ -341,67 +347,65 @@ DiveSection:Toggle({
             end
             
             DiveState.Connection = RunService.Heartbeat:Connect(function()
-                if not DiveState.Enabled or not Character.Parent or not HumanoidRootPart.Parent then 
+                if not DiveState.Enabled or not Character or not Character.Parent or not HumanoidRootPart or not HumanoidRootPart.Parent then 
                     return 
                 end
                 
                 local ball = FindBall()
-                if not ball then return end
+                if not ball or not ball.Parent then return end
                 
-                local ballPos = ball.Position
-                local playerPos = HumanoidRootPart.Position
-                local distance = (ballPos - playerPos).Magnitude
-                local currentTime = tick()
-                
-                -- Расчет скорости мяча
-                if lastBallPos then
-                    ballVelocity = (ballPos - lastBallPos) / (1/60)
-                end
-                lastBallPos = ballPos
-                
-                local ballSpeed = ballVelocity.Magnitude
-                
-                -- Динамическое расстояние ловки (учитывает скорость мяча)
-                local dynamicDiveDistance = math.min(
-                    DIVE_CONFIG.BASE_DISTANCE + (ballSpeed / 50),
-                    DIVE_CONFIG.MAX_DISTANCE
-                )
-                
-                -- Предсказание позиции мяча
-                local predictedBallPos = ballPos + (ballVelocity * DIVE_CONFIG.ANTICIPATION)
-                local predictedDistance = (predictedBallPos - playerPos).Magnitude
-                
-                -- Условия для dive
-                local shouldDive = (distance <= dynamicDiveDistance or predictedDistance <= dynamicDiveDistance) and
-                                   ballSpeed >= DIVE_CONFIG.BALL_VELOCITY_THRESHOLD and
-                                   (currentTime - DiveState.LastDiveTime) >= DIVE_CONFIG.DIVE_COOLDOWN
-                
-                if shouldDive then
-                    -- Используем предсказанную позицию для лучшей ориентации
-                    local targetPos = (predictedDistance <= dynamicDiveDistance) and predictedBallPos or ballPos
-                    local localBallPos = HumanoidRootPart.CFrame:PointToObjectSpace(targetPos)
+                pcall(function()
+                    local ballPos = ball.Position
+                    local playerPos = HumanoidRootPart.Position
+                    local distance = (ballPos - playerPos).Magnitude
+                    local currentTime = tick()
                     
-                    -- Определяем направление dive
-                    if localBallPos.X < -1 then
-                        -- Левый dive
-                        FireDiveButton(diveButtonCache.left)
-                    elseif localBallPos.X > 1 then
-                        -- Правый dive
-                        FireDiveButton(diveButtonCache.right)
-                    else
-                        -- Выбираем сторону в зависимости от Z (глубина)
-                        if localBallPos.Z > 0 then
+                    -- Расчет скорости мяча
+                    if lastBallPos then
+                        ballVelocity = (ballPos - lastBallPos) * 60
+                    end
+                    lastBallPos = ballPos
+                    
+                    local ballSpeed = ballVelocity.Magnitude
+                    
+                    -- Динамическое расстояние ловки
+                    local dynamicDiveDistance = math.min(
+                        DIVE_CONFIG.BASE_DISTANCE + math.max(0, (ballSpeed - 10) / 20),
+                        DIVE_CONFIG.MAX_DISTANCE
+                    )
+                    
+                    -- Предсказание позиции мяча
+                    local predictedBallPos = ballPos + (ballVelocity * DIVE_CONFIG.ANTICIPATION)
+                    local predictedDistance = (predictedBallPos - playerPos).Magnitude
+                    
+                    -- Условия для dive
+                    local shouldDive = (distance <= dynamicDiveDistance or predictedDistance <= dynamicDiveDistance) and
+                                       (currentTime - DiveState.LastDiveTime) >= DIVE_CONFIG.DIVE_COOLDOWN
+                    
+                    if shouldDive then
+                        -- Используем предсказанную позицию для лучшей ориентации
+                        local targetPos = (predictedDistance <= dynamicDiveDistance) and predictedBallPos or ballPos
+                        local localBallPos = HumanoidRootPart.CFrame:PointToObjectSpace(targetPos)
+                        
+                        -- Определяем направление dive
+                        if localBallPos.X < -0.5 then
+                            FireDiveButton(diveButtonCache.left)
+                        elseif localBallPos.X > 0.5 then
                             FireDiveButton(diveButtonCache.right)
                         else
-                            FireDiveButton(diveButtonCache.left)
+                            if localBallPos.Z > 0 then
+                                FireDiveButton(diveButtonCache.right)
+                            else
+                                FireDiveButton(diveButtonCache.left)
+                            end
                         end
+                        
+                        DiveState.LastDiveTime = currentTime
                     end
-                    
-                    DiveState.LastDiveTime = currentTime
-                end
+                end)
             end)
             
-            Notify("Auto Dive", "Активирован ✓ (улучшенный)", "check")
+            Notify("Auto Dive", "Активирован ✓", "check")
         end)
     end
 })
