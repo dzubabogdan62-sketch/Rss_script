@@ -19,6 +19,37 @@ local CONFIG = {
     GRAVITY = 196.2,
 }
 
+-- АВТОСОХРАНЕНИЕ И ЗАГРУЗКА НАСТРОЕК
+local SaveSystem = {
+    SaveKey = "RSS_VETA_v3_Settings",
+    DefaultSettings = {
+        ReachEnabled = false,
+        ReachX = 10,
+        ReachY = 10,
+        ReachZ = 10,
+        VisualizerEnabled = false,
+        InfiniteStaminaEnabled = false,
+        AutoDiveEnabled = false,
+        BallPredictorEnabled = false,
+        DiveDistance = 15,
+        DiveReactionTime = 0.6,
+        BallVelocityThreshold = 8,
+    }
+}
+
+local function LoadSettings()
+    local success, data = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(readfile(SaveSystem.SaveKey .. ".json") or "{}") or SaveSystem.DefaultSettings
+    end)
+    return success and data or SaveSystem.DefaultSettings
+end
+
+local function SaveSettings(settings)
+    pcall(function()
+        writefile(SaveSystem.SaveKey .. ".json", game:GetService("HttpService"):JSONEncode(settings))
+    end)
+end
+
 -- Глобальные переменные
 local State = {
     IsReachEnabled = false,
@@ -30,6 +61,26 @@ local State = {
 }
 
 getgenv().InfiniteStaminaEnabled = false
+
+-- Загружаем сохраненные настройки
+local SavedSettings = LoadSettings()
+
+-- Применяем сохраненные значения к State
+State.IsReachEnabled = SavedSettings.ReachEnabled
+State.IsVisualizerEnabled = SavedSettings.VisualizerEnabled
+State.InfiniteStaminaEnabled = SavedSettings.InfiniteStaminaEnabled
+State.HitboxSize = Vector3.new(
+    SavedSettings.ReachX or CONFIG.DEFAULT_REACH,
+    SavedSettings.ReachY or CONFIG.DEFAULT_REACH,
+    SavedSettings.ReachZ or CONFIG.DEFAULT_REACH
+)
+
+-- ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ СОХРАНЕНИЯ ============
+
+local function UpdateAndSaveSettings(key, value)
+    SavedSettings[key] = value
+    SaveSettings(SavedSettings)
+end
 
 -- ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
 
@@ -166,6 +217,7 @@ local function EnableReach()
     CreateHitbox()
     UpdateHitbox()
     State.ReachConnection = RunService.Heartbeat:Connect(ReachLoop)
+    UpdateAndSaveSettings("ReachEnabled", true)
     Notify("Reach", "Reach включен ✓", "check")
 end
 
@@ -176,6 +228,7 @@ local function DisableReach()
     end
     State.IsReachEnabled = false
     UpdateHitbox()
+    UpdateAndSaveSettings("ReachEnabled", false)
     Notify("Reach", "Reach выключен ✗", "ban")
 end
 -- ============ STAMINA СИСТЕМА ============
@@ -232,7 +285,7 @@ local ReachSection = MainTab:Section({
 
 ReachSection:Toggle({
     Title = "Включить Reach",
-    Default = false,
+    Default = SavedSettings.ReachEnabled,
     Callback = function(v)
         if v then EnableReach() else DisableReach() end
     end
@@ -240,9 +293,10 @@ ReachSection:Toggle({
 
 ReachSection:Toggle({
     Title = "Показать хитбокс",
-    Default = false,
+    Default = SavedSettings.VisualizerEnabled,
     Callback = function(v)
         State.IsVisualizerEnabled = v
+        UpdateAndSaveSettings("VisualizerEnabled", v)
         UpdateHitbox()
     end
 })
@@ -256,9 +310,10 @@ local SizeSection = MainTab:Section({
 SizeSection:Slider({
     Title = "Размер X",
     Step = 1,
-    Value = {Min = 1, Max = CONFIG.MAX_REACH, Default = CONFIG.DEFAULT_REACH},
+    Value = {Min = 1, Max = CONFIG.MAX_REACH, Default = SavedSettings.ReachX or CONFIG.DEFAULT_REACH},
     Callback = function(v)
         State.HitboxSize = Vector3.new(v, State.HitboxSize.Y, State.HitboxSize.Z)
+        UpdateAndSaveSettings("ReachX", v)
         UpdateHitbox()
     end
 })
@@ -266,9 +321,10 @@ SizeSection:Slider({
 SizeSection:Slider({
     Title = "Размер Y",
     Step = 1,
-    Value = {Min = 1, Max = CONFIG.MAX_REACH, Default = CONFIG.DEFAULT_REACH},
+    Value = {Min = 1, Max = CONFIG.MAX_REACH, Default = SavedSettings.ReachY or CONFIG.DEFAULT_REACH},
     Callback = function(v)
         State.HitboxSize = Vector3.new(State.HitboxSize.X, v, State.HitboxSize.Z)
+        UpdateAndSaveSettings("ReachY", v)
         UpdateHitbox()
     end
 })
@@ -276,9 +332,10 @@ SizeSection:Slider({
 SizeSection:Slider({
     Title = "Размер Z",
     Step = 1,
-    Value = {Min = 1, Max = CONFIG.MAX_REACH, Default = CONFIG.DEFAULT_REACH},
+    Value = {Min = 1, Max = CONFIG.MAX_REACH, Default = SavedSettings.ReachZ or CONFIG.DEFAULT_REACH},
     Callback = function(v)
         State.HitboxSize = Vector3.new(State.HitboxSize.X, State.HitboxSize.Y, v)
+        UpdateAndSaveSettings("ReachZ", v)
         UpdateHitbox()
     end
 })
@@ -327,7 +384,7 @@ TeamSection:Button({
 
 GkTab:Space()
 
--- ============ УЛУЧШЕННАЯ AUTO DIVE СИСТЕМА ============
+-- ============ УЛУЧШЕННАЯ AUTO DIVE СИСТЕМА С УМНОЙ ЛОГИКОЙ ============
 
 local DiveState = {
     Enabled = false,
@@ -335,6 +392,9 @@ local DiveState = {
     LastDiveTime = 0,
     DiveButtons = nil,
     ButtonSearchAttempts = 0,
+    BallTrajectory = {},
+    LastBallPositions = {},
+    DiveHistory = {}, -- История дайвов для анализа
 }
 
 local DIVE_CONFIG = {
@@ -343,8 +403,11 @@ local DIVE_CONFIG = {
     DIVE_COOLDOWN = 0.6,
     REACTION_TIME = 0.1,
     BALL_VELOCITY_THRESHOLD = 8,
-    ANTICIPATION = 0.2,
+    ANTICIPATION = 0.3,
     MAX_SEARCH_ATTEMPTS = 5,
+    PREDICTION_FRAMES = 15, -- Кадры предсказания
+    MIN_CONFIDENCE = 0.65, -- Минимальная уверенность в дайве
+    TRAJECTORY_SAMPLES = 5, -- Количество образцов для анализа траектории
 }
 
 -- Множественные пути поиска кнопок дайва
@@ -449,13 +512,88 @@ local function FireDiveAction(action, method)
     end
 end
 
+-- ============ УЛУЧШЕННАЯ ЛОГИКА ПРЕДСКАЗАНИЯ ============
+
+local function PredictBallTrajectory(ballPos, ballVel, frames)
+    local predictions = {}
+    local pos = ballPos
+    local vel = ballVel
+    local gravity = Vector3.new(0, -CONFIG.GRAVITY, 0)
+    local dt = 1/60 -- Один фрейм
+    
+    for i = 1, frames do
+        vel = vel + gravity * dt
+        pos = pos + vel * dt
+        table.insert(predictions, {pos = pos, vel = vel, frame = i})
+    end
+    
+    return predictions
+end
+
+local function AnalyzeBallTrajectory(ballPos, ballVel, playerPos, playerSize)
+    local predictions = PredictBallTrajectory(ballPos, ballVel, DIVE_CONFIG.PREDICTION_FRAMES)
+    local closestPoint = nil
+    local minDistance = math.huge
+    local frameOfClose = 0
+    
+    -- Найти ближайшую точку траектории к игроку
+    for i, pred in ipairs(predictions) do
+        local dist = (pred.pos - playerPos).Magnitude
+        if dist < minDistance then
+            minDistance = dist
+            closestPoint = pred
+            frameOfClose = i
+        end
+    end
+    
+    -- Анализ направления атаки
+    local directionToPlayer = (playerPos - ballPos)
+    local ballDirection = ballVel
+    local approachingDot = directionToPlayer.Unit:Dot(ballDirection.Unit)
+    
+    -- Вычисляем уверенность в попадании
+    local confidence = 0
+    if closestPoint then
+        -- Уверенность зависит от расстояния и времени до попадания
+        local distanceFactor = math.max(0, 1 - (minDistance / DIVE_CONFIG.MAX_DISTANCE))
+        local timingFactor = 1 - (frameOfClose / DIVE_CONFIG.PREDICTION_FRAMES) -- Ранние дайвы лучше
+        confidence = (distanceFactor * 0.6 + timingFactor * 0.4) * approachingDot
+    end
+    
+    return {
+        closestPoint = closestPoint,
+        minDistance = minDistance,
+        frameOfClose = frameOfClose,
+        confidence = confidence,
+        isApproaching = approachingDot > 0.2,
+    }
+end
+
+local function CalculateDiveDirection(ballPos, playerPos, playerRoot, confidence)
+    local localBallPos = playerRoot.CFrame:PointToObjectSpace(ballPos)
+    local xOffset = localBallPos.X
+    
+    -- Улучшенное определение направления с учетом уверенности
+    local diveLeft = false
+    
+    if math.abs(xOffset) > 2 then
+        -- Ясное направление
+        diveLeft = xOffset < 0
+    else
+        -- Неясное направление - используем Z координату
+        diveLeft = localBallPos.Z > 0
+    end
+    
+    return diveLeft
+end
+
 local DiveSection = GkTab:Section({
-    Title = "Автоматический Dive [ИСПРАВЛЕН]"
+    Title = "Автоматический Dive [УЛУЧШЕН]"
 })
 
 DiveSection:Toggle({
     Title = "Включить Smart Auto Dive",
-    Default = false,
+    Default = SavedSettings.AutoDiveEnabled,
     Callback = function(enabled)
         if not enabled then
             DiveState.Enabled = false
@@ -463,17 +601,20 @@ DiveSection:Toggle({
                 DiveState.Connection:Disconnect()
                 DiveState.Connection = nil
             end
+            UpdateAndSaveSettings("AutoDiveEnabled", false)
             Notify("Auto Dive", "Выключен ✗", "ban")
             return
         end
         
         DiveState.Enabled = true
+        UpdateAndSaveSettings("AutoDiveEnabled", true)
         
         -- Поиск кнопок дайва
         local buttons, method = FindDiveButtons()
         if not buttons then
             Notify("Ошибка", "Кнопки дайва не найдены!", "ban")
             DiveState.Enabled = false
+            UpdateAndSaveSettings("AutoDiveEnabled", false)
             return
         end
         
@@ -511,50 +652,56 @@ DiveSection:Toggle({
                 
                 local ballSpeed = ballVelocity.Magnitude
                 
-                -- Проверяем, движется ли мяч к нам
-                local ballDirection = ballVelocity.Unit
-                local toPlayer = (playerPos - ballPos).Unit
-                local approachingFactor = ballDirection:Dot(toPlayer)
+                -- УЛУЧШЕННЫЙ АНАЛИЗ ТРАЕКТОРИИ
+                local trajectoryAnalysis = AnalyzeBallTrajectory(ballPos, ballVelocity, playerPos, State.HitboxSize)
+                local confidence = trajectoryAnalysis.confidence
+                local isApproaching = trajectoryAnalysis.isApproaching
+                local minDistance = trajectoryAnalysis.minDistance
+                local frameOfClose = trajectoryAnalysis.frameOfClose
                 
-                -- Динамическое расстояние ловки
+                -- ДИНАМИЧЕСКОЕ РАССТОЯНИЕ С УЧЕТОМ АНАЛИЗА
                 local dynamicDiveDistance = DIVE_CONFIG.BASE_DISTANCE
                 if ballSpeed > DIVE_CONFIG.BALL_VELOCITY_THRESHOLD then
                     dynamicDiveDistance = math.min(
-                        DIVE_CONFIG.BASE_DISTANCE + (ballSpeed - DIVE_CONFIG.BALL_VELOCITY_THRESHOLD) * 0.3,
+                        DIVE_CONFIG.BASE_DISTANCE + (ballSpeed - DIVE_CONFIG.BALL_VELOCITY_THRESHOLD) * 0.4,
                         DIVE_CONFIG.MAX_DISTANCE
                     )
                 end
                 
-                -- Предсказание позиции мяча
-                local predictedBallPos = ballPos + (ballVelocity * DIVE_CONFIG.ANTICIPATION)
-                local predictedDistance = (predictedBallPos - playerPos).Magnitude
+                -- УЛУЧШЕННЫЕ УСЛОВИЯ ДЛЯ DIVE
+                local shouldDive = false
+                local diveReason = ""
                 
-                -- Условия для dive
-                local shouldDive = (distance <= dynamicDiveDistance or predictedDistance <= dynamicDiveDistance) and
-                                   (currentTime - DiveState.LastDiveTime) >= DIVE_CONFIG.DIVE_COOLDOWN and
-                                   ballSpeed > DIVE_CONFIG.BALL_VELOCITY_THRESHOLD and
-                                   approachingFactor > 0.3 -- Мяч движется к нам
+                if confidence >= DIVE_CONFIG.MIN_CONFIDENCE and isApproaching then
+                    -- Основное условие: достаточная уверенность и мяч приближается
+                    shouldDive = (minDistance <= dynamicDiveDistance) and 
+                                (currentTime - DiveState.LastDiveTime) >= DIVE_CONFIG.DIVE_COOLDOWN
+                    diveReason = "Траектория анализ (уверенность: " .. math.floor(confidence * 100) .. "%)"
+                elseif ballSpeed > DIVE_CONFIG.BALL_VELOCITY_THRESHOLD and isApproaching then
+                    -- Резервное условие: высокая скорость и приближение
+                    shouldDive = (distance <= dynamicDiveDistance) and 
+                                (currentTime - DiveState.LastDiveTime) >= DIVE_CONFIG.DIVE_COOLDOWN
+                    diveReason = "Резервное: быстрый мяч"
+                end
                 
                 if shouldDive then
-                    local targetPos = predictedDistance <= dynamicDiveDistance and predictedBallPos or ballPos
-                    local localBallPos = root.CFrame:PointToObjectSpace(targetPos)
+                    -- Определяем направление на основе анализа траектории
+                    local diveLeft = CalculateDiveDirection(
+                        trajectoryAnalysis.closestPoint.pos,
+                        playerPos,
+                        root,
+                        confidence
+                    )
                     
-                    -- Определяем направление dive с улучшенной логикой
-                    local diveAction = nil
-                    if math.abs(localBallPos.X) > 1 then
-                        diveAction = localBallPos.X < 0 and DiveState.DiveButtons.left or DiveState.DiveButtons.right
-                    else
-                        -- Если мяч по центру, выбираем сторону по Z координате
-                        diveAction = localBallPos.Z > 0 and DiveState.DiveButtons.right or DiveState.DiveButtons.left
-                    end
+                    local diveAction = diveLeft and DiveState.DiveButtons.left or DiveState.DiveButtons.right
                     
                     if diveAction then
                         FireDiveAction(diveAction, DiveState.ButtonMethod)
                         DiveState.LastDiveTime = currentTime
                         
-                        -- Визуальная обратная связь
-                        local side = diveAction == DiveState.DiveButtons.left and "Левый" or "Правый"
-                        print("Дайв:", side, "| Расстояние:", math.floor(distance), "| Скорость мяча:", math.floor(ballSpeed))
+                        -- Логирование для отладки
+                        local side = diveLeft and "ВЛЕВО" or "ВПРАВО"
+                        print("🔵 ДАЙВ: " .. side .. " | Причина: " .. diveReason .. " | Расстояние: " .. math.floor(minDistance) .. "м | Фрейм: " .. frameOfClose)
                     end
                 end
             end)
@@ -568,27 +715,40 @@ DiveSection:Toggle({
 DiveSection:Slider({
     Title = "Расстояние ловки",
     Step = 0.5,
-    Value = {Min = 8, Max = 30, Default = 15},
+    Value = {Min = 8, Max = 30, Default = SavedSettings.DiveDistance or 15},
     Callback = function(v)
         DIVE_CONFIG.BASE_DISTANCE = v
+        UpdateAndSaveSettings("DiveDistance", v)
     end
 })
 
 DiveSection:Slider({
     Title = "Скорость реакции",
     Step = 0.05,
-    Value = {Min = 0.2, Max = 1.0, Default = 0.6},
+    Value = {Min = 0.2, Max = 1.0, Default = SavedSettings.DiveReactionTime or 0.6},
     Callback = function(v)
         DIVE_CONFIG.DIVE_COOLDOWN = v
+        UpdateAndSaveSettings("DiveReactionTime", v)
+    end
+})
+
+DiveSection:Slider({
+    Title = "Минимальная уверенность (%)",
+    Step = 5,
+    Value = {Min = 30, Max = 95, Default = 65},
+    Callback = function(v)
+        DIVE_CONFIG.MIN_CONFIDENCE = v / 100
+        UpdateAndSaveSettings("MinConfidence", v)
     end
 })
 
 DiveSection:Slider({
     Title = "Минимальная скорость мяча",
     Step = 1,
-    Value = {Min = 3, Max = 20, Default = 8},
+    Value = {Min = 3, Max = 20, Default = SavedSettings.BallVelocityThreshold or 8},
     Callback = function(v)
         DIVE_CONFIG.BALL_VELOCITY_THRESHOLD = v
+        UpdateAndSaveSettings("BallVelocityThreshold", v)
     end
 })
 
@@ -630,10 +790,11 @@ local StaminaSection = StaminaTab:Section({
 
 StaminaSection:Toggle({
     Title = "Включить Infinite Stamina",
-    Default = false,
+    Default = SavedSettings.InfiniteStaminaEnabled,
     Callback = function(v)
         State.InfiniteStaminaEnabled = v
         getgenv().InfiniteStaminaEnabled = v
+        UpdateAndSaveSettings("InfiniteStaminaEnabled", v)
         UpdateStamina()
         Notify("Stamina", v and "Включена ✓" or "Выключена ✗", v and "check" or "ban")
     end
@@ -779,9 +940,10 @@ local PredictSection = PredictTab:Section({
 
 PredictSection:Toggle({
     Title = "Включить Ball Predictor",
-    Default = false,
+    Default = SavedSettings.BallPredictorEnabled,
     Callback = function(enabled)
         PredictionState.Enabled = enabled
+        UpdateAndSaveSettings("BallPredictorEnabled", enabled)
         
         if not enabled then
             if PredictionState.Connection then
@@ -896,6 +1058,28 @@ local InfoSection = SettingsTab:Section({
 })
 
 InfoSection:Button({
+    Title = "📋 Рекомендации для лучшего сейва",
+    Callback = function()
+        Notify("Рекомендации", "✓ Уверенность 60-70%\n✓ Расстояние 12-18м\n✓ Реакция 0.5-0.7\n✓ Скорость мяча 7-10", "check")
+    end
+})
+
+InfoSection:Button({
+    Title = "⚡ Активировать оптимальный режим",
+    Callback = function()
+        DIVE_CONFIG.BASE_DISTANCE = 15
+        DIVE_CONFIG.DIVE_COOLDOWN = 0.6
+        DIVE_CONFIG.BALL_VELOCITY_THRESHOLD = 8
+        DIVE_CONFIG.MIN_CONFIDENCE = 0.65
+        UpdateAndSaveSettings("DiveDistance", 15)
+        UpdateAndSaveSettings("DiveReactionTime", 0.6)
+        UpdateAndSaveSettings("BallVelocityThreshold", 8)
+        UpdateAndSaveSettings("MinConfidence", 65)
+        Notify("Оптимизация", "Параметры установлены на максимум!", "check")
+    end
+})
+
+InfoSection:Button({
     Title = "Проверить статус мяча",
     Callback = function()
         local ball = FindBall()
@@ -936,25 +1120,47 @@ InfoSection:Button({
 CreateHitbox()
 UpdateHitbox()
 
+-- Автоматическое восстановление состояния при загрузке
+task.wait(1)
+if SavedSettings.ReachEnabled then
+    EnableReach()
+    Notify("Восстановление", "Reach автоматически включен", "check")
+end
+
+if SavedSettings.InfiniteStaminaEnabled then
+    State.InfiniteStaminaEnabled = true
+    getgenv().InfiniteStaminaEnabled = true
+    UpdateStamina()
+    Notify("Восстановление", "Stamina автоматически включена", "check")
+end
+
 -- Диалог загрузки
 local Dialog = Window:Dialog({
     Icon = "star",
-    Title = "RSS - VETA v3 ✓",
-    Content = "Скрипт улучшен и исправлен!\n\n✅ Исправлены авто-прыжки\n✅ Улучшен поиск кнопок\n✅ Добавлены тесты\n✅ Лучшая обработка ошибок",
+    Title = "RSS - VETA v3 УЛУЧШЕН ✓",
+    Content = "🎯 УМНЫЙ ДАЙВ - БОЛЬШЕ НЕ ПРЫГАЕШЬ НАУГАД!\n\n✅ Анализ траектории мяча\n✅ Предсказание на 15 фреймов\n✅ Уверенность в решениях (60%+)\n✅ Умное определение направления\n✅ Автосохранение настроек\n✅ Восстановление последнего состояния",
     Buttons = {
         {
-            Title = "Понятно",
+            Title = "Начать!",
             Callback = function()
-                Notify("RSS v3", "Скрипт готов к использованию!", "check")
+                Notify("RSS v3", "Умный дайв активирован! Включи Auto Dive в меню GK", "check")
             end
         }
     }
 })
 
-print("RSS - VETA v3 загружен успешно!")
-print("Основные улучшения:")
-print("- Исправлена система авто-дайва")
-print("- Множественные методы поиска кнопок")
-print("- Улучшенная обработка ошибок")
-print("- Добавлены тесты функций")
-print("- Лучшая совместимость с разными играми")
+print("╔════════════════════════════════════════╗")
+print("║  RSS - VETA v3 - УМНЫЙ ДАЙВ ВЕРСИЯ   ║")
+print("╚════════════════════════════════════════╝")
+print("✓ Система предсказания траектории активна")
+print("✓ Анализ уверенности: ВКЛ")
+print("✓ Умный выбор направления: ВКЛ")
+print("✓ Автосохранение: ВКЛ")
+print("")
+print("📋 СОВЕТЫ:")
+print("- Мин. уверенность 60-70% для лучшей точности")
+print("- Расстояние ловки 12-18м (рекомендуется 15м)")
+print("- Скорость реакции 0.5-0.7 сек")
+print("- Минимальная скорость мяча 7-10 км/ч")
+print("")
+print("🎯 Теперь дайвы УМНЫЕ - не случайные!")
