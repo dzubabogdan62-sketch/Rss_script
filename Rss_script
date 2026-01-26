@@ -632,6 +632,9 @@ AdvancedDiveSection:Toggle({
         AdvancedDiveState.Connection = RunService.Heartbeat:Connect(function()
             if not AdvancedDiveState.Enabled then return end
             
+            -- Автоматическая адаптация параметров на основе анализа мяча
+            AdaptParametersTooBall()
+            
             local currentTime = tick()
             if (currentTime - AdvancedDiveState.LastDiveTime) < ADVANCED_DIVE_CONFIG.DIVE_COOLDOWN then
                 return
@@ -717,6 +720,73 @@ local DIVE_CONFIG = {
     MIN_CONFIDENCE = 0.65, -- Минимальная уверенность в дайве
     TRAJECTORY_SAMPLES = 5, -- Количество образцов для анализа траектории
 }
+
+-- ============ АДАПТИВНАЯ СИСТЕМА РЕГУЛИРОВКИ ============
+
+local AdaptiveSystem = {
+    LastBallDistance = math.huge,
+    LastBallSpeed = 0,
+    AdaptiveBaseDistance = 15,
+    AdaptiveReactionTime = 0.6,
+}
+
+local function AdaptParametersTooBall()
+    local ball = FindBall()
+    if not ball then return end
+    
+    local root = GetRoot()
+    if not root then return end
+    
+    local ballPos = ball.Position
+    local playerPos = root.Position
+    local distance = (ballPos - playerPos).Magnitude
+    local ballVel = ball.AssemblyLinearVelocity or ball.Velocity or Vector3.zero
+    local ballSpeed = ballVel.Magnitude
+    
+    -- АДАПТИВНОЕ РАССТОЯНИЕ ЛОВКИ
+    -- Если мяч близко и быстро - увеличиваем расстояние ловки
+    if distance < 20 then
+        if ballSpeed > 50 then
+            -- Очень быстрый мяч близко - максимум расстояния
+            AdaptiveSystem.AdaptiveBaseDistance = 20
+        elseif ballSpeed > 30 then
+            -- Быстрый мяч
+            AdaptiveSystem.AdaptiveBaseDistance = 18
+        else
+            -- Обычная скорость
+            AdaptiveSystem.AdaptiveBaseDistance = 15
+        end
+    elseif distance < 30 then
+        -- Мяч дальше - нормальное расстояние
+        AdaptiveSystem.AdaptiveBaseDistance = 14
+    else
+        -- Мяч очень далеко
+        AdaptiveSystem.AdaptiveBaseDistance = 12
+    end
+    
+    -- АДАПТИВНАЯ РЕАКЦИЯ (COOLDOWN)
+    -- Если мяч приближается быстро - быстрее реакция
+    if ballSpeed > 60 then
+        -- Супербыстрый - минимум реакции
+        AdaptiveSystem.AdaptiveReactionTime = 0.3
+    elseif ballSpeed > 40 then
+        -- Очень быстрый
+        AdaptiveSystem.AdaptiveReactionTime = 0.4
+    elseif ballSpeed > 20 then
+        -- Быстрый
+        AdaptiveSystem.AdaptiveReactionTime = 0.5
+    else
+        -- Обычный
+        AdaptiveSystem.AdaptiveReactionTime = 0.6
+    end
+    
+    -- Применяем адаптивные значения
+    DIVE_CONFIG.BASE_DISTANCE = AdaptiveSystem.AdaptiveBaseDistance
+    DIVE_CONFIG.DIVE_COOLDOWN = AdaptiveSystem.AdaptiveReactionTime
+    
+    AdaptiveSystem.LastBallDistance = distance
+    AdaptiveSystem.LastBallSpeed = ballSpeed
+end
 
 -- Множественные пути поиска кнопок дайва
 local DIVE_BUTTON_PATHS = {
@@ -946,6 +1016,8 @@ DiveSection:Toggle({
             local ball = FindBall()
             if not ball then return end
             
+            -- Автоматическая адаптация параметров на основе анализа мяча
+            AdaptParametersTooBall()
             pcall(function()
                 local ballPos = ball.Position
                 local playerPos = root.Position
@@ -1020,25 +1092,7 @@ DiveSection:Toggle({
     end
 })
 
-DiveSection:Slider({
-    Title = "Расстояние ловки",
-    Step = 0.5,
-    Value = {Min = 8, Max = 30, Default = SavedSettings.DiveDistance or 15},
-    Callback = function(v)
-        DIVE_CONFIG.BASE_DISTANCE = v
-        UpdateAndSaveSettings("DiveDistance", v)
-    end
-})
-
-DiveSection:Slider({
-    Title = "Скорость реакции",
-    Step = 0.05,
-    Value = {Min = 0.2, Max = 1.0, Default = SavedSettings.DiveReactionTime or 0.6},
-    Callback = function(v)
-        DIVE_CONFIG.DIVE_COOLDOWN = v
-        UpdateAndSaveSettings("DiveReactionTime", v)
-    end
-})
+-- Слайдеры расстояния и реакции удалены - скрипт теперь автоматически адаптирует их на основе анализа мяча
 
 DiveSection:Slider({
     Title = "Минимальная уверенность (%)",
