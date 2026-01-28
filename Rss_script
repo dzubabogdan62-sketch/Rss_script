@@ -3,15 +3,158 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
+local UserInputService = game:GetService("UserInputService")
 
 local Player = Players.LocalPlayer
 local _G = _G or {} 
 
--- Настройки
-_G.AutoFarm = true
-_G.AutoQuest = true
-_G.FruitESP = true -- Включить/Выключить ESP
-_G.AttackDist = 60 -- Расстояние над мобом
+-- Настройки по умолчанию
+_G.AutoFarm = false -- Изначально выключено, включаем через меню
+_G.AutoQuest = false
+_G.FruitESP = false
+_G.AttackDist = 60
+
+-- // GUI: Мобильное Меню //
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BloxFruitMobileGUI"
+ScreenGui.Parent = Player:WaitForChild("PlayerGui")
+ScreenGui.ResetOnSpawn = false
+
+-- Кнопка открытия/закрытия (плавающая)
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Name = "ToggleBtn"
+ToggleBtn.Parent = ScreenGui
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+ToggleBtn.Position = UDim2.new(0.1, 0, 0.2, 0) -- Позиция слева
+ToggleBtn.Size = UDim2.new(0, 50, 0, 50) -- Квадратная кнопка
+ToggleBtn.Font = Enum.Font.SourceSansBold
+ToggleBtn.Text = "MENU"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.TextSize = 14
+ToggleBtn.LayerCollector.ZIndex = 10
+ToggleBtn.BorderSizePixel = 0
+ToggleBtn.Rx = 10 -- Закругление (для UICorner)
+
+local UICornerBtn = Instance.new("UICorner")
+UICornerBtn.CornerRadius = UDim.new(0.5, 0) -- Круглая кнопка
+UICornerBtn.Parent = ToggleBtn
+
+-- Основное меню (Фрейм)
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+MainFrame.Size = UDim2.new(0.4, 0, 0.5, 0) -- Адаптивный размер (40% ширины экрана)
+MainFrame.Visible = false -- Скрыто по умолчанию
+MainFrame.BorderSizePixel = 0
+
+local UICornerFrame = Instance.new("UICorner")
+UICornerFrame.CornerRadius = UDim.new(0.1, 0)
+UICornerFrame.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Parent = MainFrame
+Title.BackgroundColor3 = Color3.fromRGB(255, 85, 0)
+Title.Size = UDim2.new(1, 0, 0.2, 0)
+Title.Font = Enum.Font.SourceSansBold
+Title.Text = "SCRIPT MENU"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 20
+Title.BackgroundTransparency = 0
+Title.BorderSizePixel = 0
+
+local UICornerTitle = Instance.new("UICorner")
+UICornerTitle.CornerRadius = UDim.new(0.1, 0)
+UICornerTitle.Parent = Title
+
+-- Функция создания кнопок переключения
+local function CreateToggle(name, text, defaultVal, callback)
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.Parent = MainFrame
+    btn.BackgroundColor3 = defaultVal and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+    btn.Size = UDim2.new(0.8, 0, 0.15, 0)
+    btn.Position = UDim2.new(0.1, 0, 0.3 + (#MainFrame:GetChildren() - 2) * 0.18, 0) -- Авто-позиционирование
+    btn.Font = Enum.Font.SourceSans
+    btn.Text = text .. ": " .. (defaultVal and "ON" or "OFF")
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 16
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0.2, 0)
+    corner.Parent = btn
+    
+    btn.MouseButton1Click:Connect(function()
+        local newVal = not (btn.Text:find("ON") ~= nil)
+        btn.Text = text .. ": " .. (newVal and "ON" or "OFF")
+        btn.BackgroundColor3 = newVal and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+        callback(newVal)
+    end)
+end
+
+-- Добавляем переключатели
+CreateToggle("AutoFarmBtn", "Auto Farm", _G.AutoFarm, function(val) _G.AutoFarm = val end)
+CreateToggle("AutoQuestBtn", "Auto Quest", _G.AutoQuest, function(val) _G.AutoQuest = val end)
+CreateToggle("ESPBtn", "Fruit ESP", _G.FruitESP, function(val) _G.FruitESP = val end)
+
+-- Кнопка закрытия внутри меню
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Parent = MainFrame
+CloseBtn.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+CloseBtn.Size = UDim2.new(0.3, 0, 0.15, 0)
+CloseBtn.Position = UDim2.new(0.35, 0, 0.8, 0)
+CloseBtn.Text = "CLOSE"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Font = Enum.Font.SourceSansBold
+CloseBtn.TextSize = 14
+
+local UICornerClose = Instance.new("UICorner")
+UICornerClose.CornerRadius = UDim.new(0.2, 0)
+UICornerClose.Parent = CloseBtn
+
+-- Логика открытия/закрытия
+ToggleBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+end)
+
+-- Draggable Logic (Перетаскивание кнопки меню)
+local dragging, dragInput, dragStart, startPos
+local function update(input)
+    local delta = input.Position - dragStart
+    ToggleBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+ToggleBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = ToggleBtn.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+ToggleBtn.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        update(input)
+    end
+end)
 
 -- // ФУНКЦИЯ СОЗДАНИЯ ESP //
 local function CreateESP(part, name)
@@ -158,6 +301,13 @@ task.spawn(function()
                     end
                 end
             end)
+        else
+            -- Если ESP выключен, удаляем старые метки
+            for _, v in pairs(Workspace:GetChildren()) do
+                if string.find(v.Name, "Fruit") and v:IsA("Tool") and v:FindFirstChild("Handle") and v.Handle:FindFirstChild("FruitESP") then
+                    v.Handle.FruitESP:Destroy()
+                end
+            end
         end
     end
 end)
