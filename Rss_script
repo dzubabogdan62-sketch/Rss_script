@@ -3,6 +3,7 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local Player = Players.LocalPlayer
 local _G = _G or {} 
@@ -127,16 +128,60 @@ end)
 
 -- // ЛОГИКА СКРИПТА //
 
+-- // КОНФИГУРАЦИЯ КВЕСТОВ (FIRST SEA) //
+local QuestList = {
+    {Req=0, Name="BanditQuest1", Id=1, Mob="Bandit"},
+    {Req=10, Name="JungleQuest", Id=1, Mob="Monkey"},
+    {Req=15, Name="JungleQuest", Id=2, Mob="Gorilla"},
+    {Req=30, Name="BuggyQuest1", Id=1, Mob="Pirate"},
+    {Req=40, Name="BuggyQuest1", Id=2, Mob="Brute"},
+    {Req=60, Name="DesertQuest", Id=1, Mob="Desert Bandit"},
+    {Req=75, Name="DesertQuest", Id=2, Mob="Desert Officer"},
+    {Req=90, Name="SnowQuest", Id=1, Mob="Snow Bandit"},
+    {Req=100, Name="SnowQuest", Id=2, Mob="Snowman"},
+    {Req=120, Name="MarineQuest2", Id=1, Mob="Chief Petty Officer"},
+    {Req=150, Name="SkyQuest", Id=1, Mob="Sky Bandit"},
+    {Req=175, Name="SkyQuest", Id=2, Mob="Dark Master"},
+    {Req=190, Name="PrisonerQuest", Id=1, Mob="Prisoner"},
+    {Req=210, Name="PrisonerQuest", Id=2, Mob="Dangerous Prisoner"},
+    {Req=225, Name="ColosseumQuest", Id=1, Mob="Toga Warrior"},
+    {Req=275, Name="ColosseumQuest", Id=2, Mob="Gladiator"},
+    {Req=300, Name="MagmaQuest", Id=1, Mob="Military Soldier"},
+    {Req=325, Name="MagmaQuest", Id=2, Mob="Military Spy"},
+    {Req=375, Name="FishmanQuest", Id=1, Mob="Fishman Warrior"},
+    {Req=400, Name="FishmanQuest", Id=2, Mob="Fishman Commando"},
+    {Req=450, Name="SkyExp1Quest", Id=1, Mob="God's Guard"},
+    {Req=475, Name="SkyExp1Quest", Id=2, Mob="Shanda"},
+    {Req=525, Name="SkyExp2Quest", Id=1, Mob="Royal Squad"},
+    {Req=625, Name="FountainQuest", Id=1, Mob="Galley Pirate"},
+    {Req=650, Name="FountainQuest", Id=2, Mob="Galley Captain"}
+}
+
+local function GetCurrentQuestConfig(level)
+    for i = #QuestList, 1, -1 do
+        if level >= QuestList[i].Req then
+            return QuestList[i]
+        end
+    end
+    return QuestList[1]
+end
+
 local function GetQuestTarget()
     local gui = Player:FindFirstChild("PlayerGui")
     if gui and gui:FindFirstChild("Main") and gui.Main:FindFirstChild("Quest") then
         local q = gui.Main.Quest
         if q.Visible then
-            local t = q.Container.QuestTitle.Title.Text:lower()
-            if string.find(t, "bandit") then return "Bandit" end
-            if string.find(t, "monkey") then return "Monkey" end
-            if string.find(t, "gorilla") then return "Gorilla" end
-            if string.find(t, "pirate") then return "Pirate" end
+            local t = q.Container.QuestTitle.Title.Text
+            -- Проверяем всех мобов из списка
+            for _, cfg in pairs(QuestList) do
+                if string.find(t, cfg.Mob) then return cfg.Mob end
+            end
+            -- Доп. проверки если название в квесте отличается (множественное число и т.д.)
+            if string.find(t, "Bandit") then return "Bandit" end
+            if string.find(t, "Monkey") then return "Monkey" end
+            if string.find(t, "Gorilla") then return "Gorilla" end
+            if string.find(t, "Pirate") then return "Pirate" end
+            if string.find(t, "Galley Pirate") then return "Galley Pirate" end
         end
     end
     return nil
@@ -165,10 +210,10 @@ task.spawn(function()
                     local gui = Player.PlayerGui
                     if gui.Main.Quest.Visible == false then
                         local lvl = Player.Data.Level.Value
-                        local remote = ReplicatedStorage.Remotes.CommF_
-                        if lvl < 10 then remote:InvokeServer("StartQuest", "BanditQuest1", 1)
-                        elseif lvl < 15 then remote:InvokeServer("StartQuest", "JungleQuest", 1)
-                        else remote:InvokeServer("StartQuest", "JungleQuest", 2) end
+                        local questConfig = GetCurrentQuestConfig(lvl)
+                        if questConfig then
+                            ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", questConfig.Name, questConfig.Id)
+                        end
                     end
                 end
 
@@ -195,9 +240,23 @@ task.spawn(function()
                     Player.Character.HumanoidRootPart.CFrame = targetPos
                     Player.Character.HumanoidRootPart.Velocity = Vector3.zero
                     
-                    if weapon then weapon:Activate() end
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton1(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+                    if weapon then 
+                        weapon:Activate() 
+                        -- Спам атаки для надежности (Mobile/PC)
+                        task.spawn(function()
+                            -- Метод 1: VirtualUser
+                            pcall(function()
+                                VirtualUser:CaptureController()
+                                VirtualUser:ClickButton1(Vector2.new(800, 600), Workspace.CurrentCamera.CFrame)
+                            end)
+                            -- Метод 2: VirtualInputManager (более надежный для многих экзекуторов)
+                            pcall(function()
+                                VirtualInputManager:SendMouseButtonEvent(800, 600, 0, true, game, 1)
+                                task.wait()
+                                VirtualInputManager:SendMouseButtonEvent(800, 600, 0, false, game, 1)
+                            end)
+                        end)
+                    end
                 end
             end)
         end
