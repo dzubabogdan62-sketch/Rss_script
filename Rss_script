@@ -148,7 +148,7 @@ local QuestList = {
     {Req=0, Name="BanditQuest1", Id=1, Mob="Bandit"},
     {Req=10, Name="JungleQuest", Id=1, Mob="Monkey"},
     {Req=15, Name="JungleQuest", Id=2, Mob="Gorilla"},
-    {Req=25, Name="JungleQuest", Id=3, Mob="Gorilla King"},
+    {Req=20, Name="JungleQuest", Id=3, Mob="Gorilla King"},
     {Req=30, Name="BuggyQuest1", Id=1, Mob="Pirate"},
     {Req=40, Name="BuggyQuest1", Id=2, Mob="Brute"},
     {Req=60, Name="DesertQuest", Id=1, Mob="Desert Bandit"},
@@ -176,6 +176,12 @@ local QuestList = {
 local function GetCurrentQuestConfig(level)
     for i = #QuestList, 1, -1 do
         if level >= QuestList[i].Req then
+            -- Проверка наличия босса (если это босс)
+            if QuestList[i].Mob == "Gorilla King" then
+                if not Workspace.Enemies:FindFirstChild("Gorilla King") then
+                    continue -- Босса нет, пропускаем и ищем квест ниже уровнем (Gorilla)
+                end
+            end
             return QuestList[i]
         end
     end
