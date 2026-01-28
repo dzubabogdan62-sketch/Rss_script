@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local Player = Players.LocalPlayer
 local _G = _G or {} 
@@ -12,7 +13,10 @@ local _G = _G or {}
 _G.AutoFarm = false
 _G.AutoQuest = false
 _G.FruitESP = false
-_G.AttackDist = 50 -- Дистанция атаки
+_G.AttackDist = 3
+_G.MobileAttackOnly = true
+local FruitRespawnPeriod = 3600
+local NextFruitSpawn = os.time() + FruitRespawnPeriod
 
 -- // GUI ИНТЕРФЕЙС //
 local ScreenGui = Instance.new("ScreenGui")
@@ -126,6 +130,17 @@ CloseBtn.Activated:Connect(function()
     MainFrame.Visible = false
 end)
 
+local FruitTimerLabel = Instance.new("TextLabel")
+FruitTimerLabel.Parent = ScreenGui
+FruitTimerLabel.Position = UDim2.new(0.05, 0, 0.08, 0)
+FruitTimerLabel.Size = UDim2.new(0, 220, 0, 30)
+FruitTimerLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+FruitTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+FruitTimerLabel.Font = Enum.Font.SourceSansBold
+FruitTimerLabel.TextSize = 14
+FruitTimerLabel.ZIndex = 110
+FruitTimerLabel.Text = "Фрукты: —"
+
 -- // ЛОГИКА СКРИПТА //
 
 -- // КОНФИГУРАЦИЯ КВЕСТОВ (FIRST SEA) //
@@ -133,6 +148,7 @@ local QuestList = {
     {Req=0, Name="BanditQuest1", Id=1, Mob="Bandit"},
     {Req=10, Name="JungleQuest", Id=1, Mob="Monkey"},
     {Req=15, Name="JungleQuest", Id=2, Mob="Gorilla"},
+    {Req=25, Name="JungleQuest", Id=3, Mob="Gorilla King"},
     {Req=30, Name="BuggyQuest1", Id=1, Mob="Pirate"},
     {Req=40, Name="BuggyQuest1", Id=2, Mob="Brute"},
     {Req=60, Name="DesertQuest", Id=1, Mob="Desert Bandit"},
@@ -180,6 +196,7 @@ local function GetQuestTarget()
             if string.find(t, "Bandit") then return "Bandit" end
             if string.find(t, "Monkey") then return "Monkey" end
             if string.find(t, "Gorilla") then return "Gorilla" end
+            if string.find(t, "Gorilla King") then return "Gorilla King" end
             if string.find(t, "Pirate") then return "Pirate" end
             if string.find(t, "Galley Pirate") then return "Galley Pirate" end
         end
@@ -235,27 +252,30 @@ task.spawn(function()
                 -- 3. Атака
                 if target then
                     local weapon = EquipBest()
-                    local targetPos = target.HumanoidRootPart.CFrame * CFrame.new(0, _G.AttackDist, 0)
+                    local targetPos = target.HumanoidRootPart.CFrame * CFrame.new(0, 2, -_G.AttackDist)
                     
                     Player.Character.HumanoidRootPart.CFrame = targetPos
                     Player.Character.HumanoidRootPart.Velocity = Vector3.zero
                     
                     if weapon then 
-                        weapon:Activate() 
-                        -- Спам атаки для надежности (Mobile/PC)
-                        task.spawn(function()
-                            -- Метод 1: VirtualUser
+                        weapon:Activate()
+                        if _G.MobileAttackOnly then
+                            local cam = Workspace.CurrentCamera
+                            local cx = math.floor(cam.ViewportSize.X/2)
+                            local cy = math.floor(cam.ViewportSize.Y/2)
+                            task.spawn(function()
+                                pcall(function()
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+                                    task.wait(0.02)
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
+                                end)
+                            end)
+                        else
                             pcall(function()
                                 VirtualUser:CaptureController()
                                 VirtualUser:ClickButton1(Vector2.new(800, 600), Workspace.CurrentCamera.CFrame)
                             end)
-                            -- Метод 2: VirtualInputManager (более надежный для многих экзекуторов)
-                            pcall(function()
-                                VirtualInputManager:SendMouseButtonEvent(800, 600, 0, true, game, 1)
-                                task.wait()
-                                VirtualInputManager:SendMouseButtonEvent(800, 600, 0, false, game, 1)
-                            end)
-                        end)
+                        end
                     end
                 end
             end)
@@ -268,6 +288,7 @@ task.spawn(function()
     while task.wait(0.5) do
         if _G.FruitESP then
             pcall(function()
+                local found = 0
                 for _, v in pairs(Workspace:GetChildren()) do
                     if string.find(v.Name, "Fruit") and v:IsA("Tool") and v:FindFirstChild("Handle") then
                         if not v.Handle:FindFirstChild("FruitESP") then
@@ -294,6 +315,19 @@ task.spawn(function()
                             local dist = math.floor((Player.Character.HumanoidRootPart.Position - v.Handle.Position).Magnitude)
                             v.Handle.FruitESP.TextLabel.Text = v.Name .. " [" .. dist .. "m]"
                         end
+                        found = found + 1
+                    end
+                end
+                if found > 0 then
+                    FruitTimerLabel.Text = "Фрукты: " .. found
+                    NextFruitSpawn = os.time() + FruitRespawnPeriod
+                else
+                    local left = math.max(0, NextFruitSpawn - os.time())
+                    local m = math.floor(left/60)
+                    local s = left % 60
+                    FruitTimerLabel.Text = string.format("Нет фруктов • спавн через %02d:%02d", m, s)
+                    if left == 0 then
+                        NextFruitSpawn = os.time() + FruitRespawnPeriod
                     end
                 end
             end)
@@ -304,6 +338,10 @@ task.spawn(function()
                     v.Handle.FruitESP:Destroy()
                 end
             end
+            local left = math.max(0, NextFruitSpawn - os.time())
+            local m = math.floor(left/60)
+            local s = left % 60
+            FruitTimerLabel.Text = string.format("Нет фруктов • спавн через %02d:%02d", m, s)
         end
     end
 end)
