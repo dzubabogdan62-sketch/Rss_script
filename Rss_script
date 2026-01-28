@@ -20,8 +20,9 @@ _G.BringMobs = true -- Собирать мобов в кучу
 _G.StatToUpgrade = "Melee"
 _G.AttackDist = 3
 _G.MobileAttackOnly = true
-_G.HitboxSize = 60 -- Увеличенный размер
-_G.FarmHeight = 15 -- Высота над мобами для безопасности
+_G.HitboxSize = 20 -- Безопасный размер (не больше 30!)
+_G.FarmHeight = 15 -- Высота над мобами (не больше 20 студов!)
+_G.BringMobsOffset = 2 -- Небольшой разброс мобов (чтобы не стояли в одной точке)
 
 -- Система отслеживания фруктов
 local FruitSpawnData = {
@@ -405,30 +406,61 @@ task.spawn(function()
     end
 end)
 
--- Bring Mobs (Собирать мобов в одно место)
+-- Bring Mobs (УЛУЧШЕННЫЙ - с офсетом и проверкой дистанции)
+local MobBringIndex = 0
 local function BringMobs(targetPos)
     if not _G.BringMobs then return end
     
     pcall(function()
         local enemies = Workspace:FindFirstChild("Enemies")
-        if enemies then
-            local targetName = GetQuestTarget()
-            for _, v in pairs(enemies:GetChildren()) do
-                if v:FindFirstChild("Humanoid") and v:FindFirstChild("HumanoidRootPart") and v.Humanoid.Health > 0 then
-                    if not targetName or string.find(v.Name, targetName) then
-                        -- Телепортируем моба к нам
-                        v.HumanoidRootPart.CFrame = targetPos
-                        v.HumanoidRootPart.Velocity = Vector3.zero
-                        v.HumanoidRootPart.CanCollide = false
-                        
-                        -- Замораживаем моба
-                        if v.Humanoid then
-                            v.Humanoid.WalkSpeed = 0
-                            v.Humanoid.JumpPower = 0
+        if not enemies then return end
+        
+        local targetName = GetQuestTarget()
+        local mobCount = 0
+        
+        for _, v in pairs(enemies:GetChildren()) do
+            if v:FindFirstChild("Humanoid") and v:FindFirstChild("HumanoidRootPart") and v.Humanoid.Health > 0 then
+                if not targetName or string.find(v.Name, targetName) then
+                    local mobRoot = v.HumanoidRootPart
+                    
+                    -- Проверка: не слишком ли далеко от спавна (защита от Leash)
+                    -- Если моб дальше 200 студов от целевой позиции, не трогаем его
+                    local distanceFromTarget = (mobRoot.Position - targetPos.Position).Magnitude
+                    if distanceFromTarget > 200 then
+                        continue
+                    end
+                    
+                    -- Добавляем небольшой офсет для каждого моба (чтобы не стояли в одной точке)
+                    local offsetX = math.random(-_G.BringMobsOffset, _G.BringMobsOffset)
+                    local offsetZ = math.random(-_G.BringMobsOffset, _G.BringMobsOffset)
+                    local bringPos = targetPos * CFrame.new(offsetX, 0, offsetZ)
+                    
+                    -- Телепортируем моба
+                    mobRoot.CFrame = bringPos
+                    mobRoot.Velocity = Vector3.zero
+                    mobRoot.CanCollide = false -- КРИТИЧНО: отключаем коллизии
+                    
+                    -- Замораживаем моба
+                    if v.Humanoid then
+                        v.Humanoid.WalkSpeed = 0
+                        v.Humanoid.JumpPower = 0
+                    end
+                    
+                    -- Отключаем CanCollide у ВСЕХ частей моба
+                    for _, part in pairs(v:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = false
                         end
                     end
+                    
+                    mobCount = mobCount + 1
                 end
             end
+        end
+        
+        -- Обновляем инфо-панель
+        if mobCount > 0 then
+            InfoLabel.Text = "⚡ Мобов собрано: " .. mobCount .. " | Fast Attack активен"
         end
     end)
 end
@@ -479,9 +511,10 @@ task.spawn(function()
                     BringMobs(CFrame.new(target.HumanoidRootPart.Position))
                     
                     if weapon then 
-                        -- Fast Attack
+                        -- Fast Attack (УЛУЧШЕННЫЙ - с защитой от античита)
                         if _G.FastAttack then
                             local currentTime = tick()
+                            -- Задержка 0.1 сек - достаточно быстро, но безопасно
                             if currentTime - AttackCooldown >= 0.1 then
                                 weapon:Activate()
                                 AttackCooldown = currentTime
@@ -491,11 +524,12 @@ task.spawn(function()
                                     local cx = math.floor(cam.ViewportSize.X/2)
                                     local cy = math.floor(cam.ViewportSize.Y/2)
                                     
-                                    for i = 1, 3 do -- Множественные клики
+                                    -- Уменьшаем количество кликов до 2 (было 3)
+                                    for i = 1, 2 do
                                         task.spawn(function()
                                             pcall(function()
                                                 VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
-                                                task.wait(0.01)
+                                                task.wait(0.02) -- Небольшая задержка между кликами
                                                 VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
                                             end)
                                         end)
@@ -582,26 +616,38 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- Hitbox Expander (УВЕЛИЧЕННЫЙ)
+-- Hitbox Expander (ОПТИМИЗИРОВАННЫЙ - безопасный размер)
 task.spawn(function()
     while task.wait(0.2) do
         if _G.ReachAura then
             pcall(function()
                 local enemies = Workspace:FindFirstChild("Enemies")
-                if enemies then
-                    for _, v in pairs(enemies:GetChildren()) do
-                        if v:FindFirstChild("Humanoid") and v:FindFirstChild("HumanoidRootPart") and v.Humanoid.Health > 0 then
-                            -- БОЛЬШОЙ хитбокс
-                            v.HumanoidRootPart.Size = Vector3.new(_G.HitboxSize, _G.HitboxSize, _G.HitboxSize)
-                            v.HumanoidRootPart.Transparency = 0.95
-                            v.HumanoidRootPart.CanCollide = false
-                            v.HumanoidRootPart.Massless = true
-                            
-                            -- Отключаем все коллизии
-                            for _, part in pairs(v:GetChildren()) do
-                                if part:IsA("BasePart") then
-                                    part.CanCollide = false
-                                end
+                if not enemies then return end
+                
+                local playerPos = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+                if not playerPos then return end
+                
+                for _, v in pairs(enemies:GetChildren()) do
+                    if v:FindFirstChild("Humanoid") and v:FindFirstChild("HumanoidRootPart") and v.Humanoid.Health > 0 then
+                        local mobRoot = v.HumanoidRootPart
+                        
+                        -- Проверка дистанции (Magnitude Check защита)
+                        -- Не увеличиваем хитбокс, если моб дальше 60 студов
+                        local distance = (playerPos.Position - mobRoot.Position).Magnitude
+                        if distance > 60 then
+                            continue
+                        end
+                        
+                        -- Безопасный размер хитбокса (20x20x20)
+                        mobRoot.Size = Vector3.new(_G.HitboxSize, _G.HitboxSize, _G.HitboxSize)
+                        mobRoot.Transparency = 0.95
+                        mobRoot.CanCollide = false
+                        mobRoot.Massless = true
+                        
+                        -- Отключаем все коллизии у всех частей
+                        for _, part in pairs(v:GetDescendants()) do
+                            if part:IsA("BasePart") then
+                                part.CanCollide = false
                             end
                         end
                     end
